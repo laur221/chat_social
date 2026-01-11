@@ -125,6 +125,7 @@ async def handle_client(websocket: websockets.WebSocketServerProtocol):
                         await user_connections[target].send(json.dumps({
                             "type": "private_message",
                             "username": username,
+                            "target": target,
                             "message": msg_text,
                             "timestamp": datetime.now().isoformat()
                         }))
