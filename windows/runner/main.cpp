@@ -25,12 +25,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
-  Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"chat_social", origin, size)) {
+  Win32Window::Point origin(400, 400); // Poziția inițială
+  Win32Window::Size size(500, 350);   // Dimensiunea inițială
+  Win32Window::Size min_size(500, 350); // Dimensiunea minimă
+  Win32Window::Size max_size(500, 350); // Dimensiunea maximă
+  if (!window.Create(L"Chat Social", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+
+  // Dezactivează redimensionarea
+  HWND hwnd = window.GetHandle();
+  LONG style = GetWindowLong(hwnd, GWL_STYLE);
+  style &= ~WS_SIZEBOX; // Elimină stilul de redimensionare
+  SetWindowLong(hwnd, GWL_STYLE, style);
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {

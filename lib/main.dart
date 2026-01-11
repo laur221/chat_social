@@ -1,5 +1,7 @@
 import 'dart:io'; // Pentru detectarea platformei
 import 'package:flutter/material.dart';
+import 'windows/main.dart'; // Importă fișierul pentru PC
+import 'android/main.dart'; // Importă fișierul pentru Telefon
 
 void main() {
   runApp(const MainApp());
@@ -12,17 +14,9 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        body: Center(
-          child: Platform.isWindows
-              ? const Text(
-                  'Aceasta este versiunea pentru Windows',
-                  style: TextStyle(fontSize: 20),
-                )
-              : const Text(
-                  'Aceasta este versiunea pentru Telefon',
-                  style: TextStyle(fontSize: 15),
-                ),
-        ),
+        body: Platform.isWindows
+            ? const ChatApp() // Încarcă widget-ul pentru PC
+            : const MobileHome(), // Încarcă widget-ul pentru Telefon
       ),
     );
   }
