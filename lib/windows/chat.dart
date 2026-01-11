@@ -167,7 +167,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // Schimbă chat-ul și gestionează draft-urile
   void _changeChat(String newChat) {
     _saveCurrentDraft();
-    // Clear unread count when opening the chat
+    // Clear unread count when opening chat
     setState(() {
       _selectedChat = newChat;
       _unreadCounts.remove(newChat);
@@ -473,47 +473,34 @@ class _ChatScreenState extends State<ChatScreen> {
                       title: Row(
                         children: [
                           Expanded(child: Text(group)),
-                          // Unread indicator
+                          // Draft indicator
                           if (_drafts.containsKey(group) && _drafts[group]!.isNotEmpty)
                             Padding(
-                              padding: const EdgeInsets.only(left: 4),
+                              padding: const EdgeInsets.only(left:4),
                               child: Icon(Icons.edit_note, size: 14, color: Colors.yellow[700]),
-                            ),
-                          // Pin icon
-                          if (_pinnedChats.contains(group))
-                            Padding(
-                              padding: const EdgeInsets.only(left: 4),
-                              child: Icon(Icons.push_pin, size: 14, color: Colors.blue),
                             ),
                         ],
                       ),
                       selected: _selectedChat == group,
-                      trailing: group != 'General'
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Pin button
-                                IconButton(
-                                  icon: Icon(
-                                    _pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
-                                    size: 18,
-                                  ),
-                                  onPressed: () => _togglePin(group),
-                                ),
-                                // Add member button
-                                IconButton(
-                                  icon: const Icon(Icons.add_circle, size: 18),
-                                  onPressed: () => _addToGroup(group),
-                                ),
-                              ],
-                            )
-                          : IconButton(
-                              icon: Icon(
-                                _pinnedChats.contains('General') ? Icons.push_pin : Icons.push_pin_outlined,
-                                size: 18,
-                              ),
-                              onPressed: () => _togglePin('General'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Pin button
+                          IconButton(
+                            icon: Icon(
+                              _pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
+                              size: 18,
                             ),
+                            onPressed: () => _togglePin(group),
+                          ),
+                          // Add member button
+                          if (group != 'General')
+                            IconButton(
+                              icon: const Icon(Icons.add_circle, size: 18),
+                              onPressed: () => _addToGroup(group),
+                            ),
+                        ],
+                      ),
                       onTap: () => _changeChat(group),
                     )),
                 ListTile(
@@ -583,14 +570,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             // Draft indicator
                             if (_drafts.containsKey(user) && _drafts[user]!.isNotEmpty)
                               Padding(
-                                padding: const EdgeInsets.only(left: 4),
+                                padding: const EdgeInsets.only(left:4),
                                 child: Icon(Icons.edit_note, size: 14, color: Colors.yellow[700]),
-                              ),
-                            // Pin icon
-                            if (_pinnedChats.contains(user))
-                              Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: Icon(Icons.push_pin, size: 14, color: Colors.blue),
                               ),
                           ],
                         ),
@@ -627,23 +608,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: Colors.white,
                       ),
                       const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _selectedChat == 'General' ? 'Chat General' : _selectedChat,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 20,
-                          ),
-                        ),
-                      ),
-                      // Pin button in header
-                      IconButton(
-                        icon: Icon(
-                          _pinnedChats.contains(_selectedChat) ? Icons.push_pin : Icons.push_pin_outlined,
+                      Text(
+                        _selectedChat == 'General' ? 'Chat General' : _selectedChat,
+                        style: const TextStyle(
                           color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
                         ),
-                        onPressed: () => _togglePin(_selectedChat),
                       ),
                     ],
                   ),
