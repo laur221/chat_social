@@ -29,6 +29,16 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, int> _unreadCounts = {};
   // Pinned chats (users and groups)
   final Set<String> _pinnedChats = {};
+  // Typing indicator: {username: bool}
+  final Map<String, bool> _typingUsers = {};
+  // Typing debounce timer
+  Timer? _typingTimer;
+  // Reconnect attempt counter
+  int _reconnectAttempts = 0;
+  // Reconnect timer
+  Timer? _reconnectTimer;
+  // Connection status
+  bool _isConnected = false;
 
   @override
   void initState() {
@@ -47,6 +57,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
       _channel.stream.listen(
         (message) {
+          // Reset reconnect attempts on successful connection
+          setState(() {
+            _isConnected = true;
+            _reconnectAttempts = 0;
+          });
           final data = jsonDecode(message) as Map<String, dynamic>;
           _handleServerMessage(data);
         },
@@ -67,89 +82,100 @@ class _ChatScreenState extends State<ChatScreen> {
       }));
     } catch (e) {
       print('Eroare la conectare: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Nu s-a putut conecta la server'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _handleDisconnect();
     }
   }
 
   void _handleServerMessage(Map<String, dynamic> data) {
-    setState(() {
-      switch (data['type'] as String) {
-        case 'user_list':
-          _users.clear();
-          _users.addAll((data['users'] as List).cast<String>());
-          break;
-        case 'message':
-          final msg = ChatMessage(
-            username: data['username'] as String,
-            message: data['message'] as String,
-            timestamp: DateTime.parse(data['timestamp'] as String),
-            isPrivate: false,
-            group: 'General',
-          );
-          _messages.add(msg);
-          // Increment unread count for General
-          if (_selectedChat != 'General') {
-            _unreadCounts['General'] = (_unreadCounts['General'] ?? 0) + 1;
-          }
-          break;
-        case 'private_message':
-          final sender = data['username'] as String;
-          final target = data['target'] as String;
-          final msg = ChatMessage(
-            username: sender,
-            message: data['message'] as String,
-            timestamp: DateTime.parse(data['timestamp'] as String),
-            isPrivate: true,
-            target: target,
-          );
-          _messages.add(msg);
-          // Increment unread count for the sender
-          if (_selectedChat != sender && target == widget.username) {
-            _unreadCounts[sender] = (_unreadCounts[sender] ?? 0) + 1;
-          }
-          break;
-        case 'group_message':
-          final group = data['group'] as String;
-          final msg = ChatMessage(
-            username: data['username'] as String,
-            message: data['message'] as String,
-            timestamp: DateTime.parse(data['timestamp'] as String),
-            isPrivate: false,
-            group: group,
-          );
-          _messages.add(msg);
-          // Increment unread count for the group
-          if (_selectedChat != group) {
-            _unreadCounts[group] = (_unreadCounts[group] ?? 0) + 1;
-          }
-          break;
-        case 'group_created':
-          final groupName = data['group_name'] as String;
-          if (!_groups.contains(groupName)) {
-            _groups.add(groupName);
-            if (data['creator'] == widget.username) {
-              _myGroups.add(groupName);
+    if (!mounted) return;
+    
+    try {
+      setState(() {
+        switch (data['type'] as String) {
+          case 'user_list':
+            _users.clear();
+            _users.addAll((data['users'] as List).cast<String>());
+            break;
+          case 'typing':
+            final sender = data['username'] as String;
+            final target = data['target'] as String;
+            final isTyping = data['typing'] as bool;
+            if (target == widget.username) {
+              _typingUsers[sender] = isTyping;
             }
-          }
-          break;
-        case 'added_to_group':
-          final groupName = data['group_name'] as String;
-          if (!_myGroups.contains(groupName)) {
-            _myGroups.add(groupName);
+            break;
+          case 'message':
+            final msg = ChatMessage(
+              username: data['username'] as String,
+              message: data['message'] as String,
+              timestamp: DateTime.parse(data['timestamp'] as String),
+              isPrivate: false,
+              group: 'General',
+            );
+            _messages.add(msg);
+            // Increment unread count for General
+            if (_selectedChat != 'General') {
+              _unreadCounts['General'] = (_unreadCounts['General'] ?? 0) + 1;
+            }
+            break;
+          case 'private_message':
+            final sender = data['username'] as String;
+            final target = data['target'] as String;
+            final msg = ChatMessage(
+              username: sender,
+              message: data['message'] as String,
+              timestamp: DateTime.parse(data['timestamp'] as String),
+              isPrivate: true,
+              target: target,
+            );
+            _messages.add(msg);
+            // Increment unread count for the sender
+            if (_selectedChat != sender && target == widget.username) {
+              _unreadCounts[sender] = (_unreadCounts[sender] ?? 0) + 1;
+            }
+            break;
+          case 'group_message':
+            final group = data['group'] as String;
+            final sender = data['username'] as String;
+            // Nu adăuga mesajul dacă îl trimitem noi înșine (deja adăugat local)
+            if (sender != widget.username) {
+              final msg = ChatMessage(
+                username: sender,
+                message: data['message'] as String,
+                timestamp: DateTime.parse(data['timestamp'] as String),
+                isPrivate: false,
+                group: group,
+              );
+              _messages.add(msg);
+              // Increment unread count for group
+              if (_selectedChat != group) {
+                _unreadCounts[group] = (_unreadCounts[group] ?? 0) + 1;
+              }
+            }
+            break;
+          case 'group_created':
+            final groupName = data['group_name'] as String;
             if (!_groups.contains(groupName)) {
               _groups.add(groupName);
+              if (data['creator'] == widget.username) {
+                _myGroups.add(groupName);
+              }
             }
-          }
-          break;
-      }
-    });
+            break;
+          case 'added_to_group':
+            final groupName = data['group_name'] as String;
+            if (!_myGroups.contains(groupName)) {
+              _myGroups.add(groupName);
+              if (!_groups.contains(groupName)) {
+                _groups.add(groupName);
+              }
+            }
+            break;
+        }
+      });
+    } catch (e) {
+      print('Eroare la procesarea mesajului: $e');
+    }
   }
 
   // Salvează draft-ul curent înainte de a schimba chat-ul
@@ -183,6 +209,35 @@ class _ChatScreenState extends State<ChatScreen> {
       } else {
         _pinnedChats.add(chatId);
       }
+    });
+  }
+
+  // Trimite typing indicator
+  void _sendTypingIndicator(bool isTyping) {
+    try {
+      if (_users.contains(_selectedChat)) {
+        _channel.sink.add(jsonEncode({
+          'type': 'typing',
+          'username': widget.username,
+          'target': _selectedChat,
+          'typing': isTyping,
+        }));
+      }
+    } catch (e) {
+      print('Eroare la trimiterea typing indicator: $e');
+    }
+  }
+
+  // Gestionează schimbarea textului pentru typing indicator
+  void _onTextChanged(String text) {
+    // Trimite typing indicator
+    _sendTypingIndicator(true);
+    
+    // Resetează timer-ul
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(seconds: 2), () {
+      // Dacă nu mai scrie, trimite indicator stop
+      _sendTypingIndicator(false);
     });
   }
 
@@ -238,42 +293,57 @@ class _ChatScreenState extends State<ChatScreen> {
     final message = _messageController.text.trim();
     if (message.isEmpty) return;
 
-    if (_selectedChat == 'General') {
-      // Mesaj public către toți
-      _channel.sink.add(jsonEncode({
-        'type': 'message',
-        'username': widget.username,
-        'message': message,
-      }));
-      // Șterge draft-ul pentru General după trimitere
-      _drafts.remove('General');
-      _messageController.clear();
-    } else if (_users.contains(_selectedChat)) {
-      // Mesaj privat către utilizator
-      _channel.sink.add(jsonEncode({
-        'type': 'private_message',
-        'username': widget.username,
-        'target': _selectedChat,
-        'message': message,
-      }));
-      // Adaugă mesajul în lista locală
-      _addSentMessage(message, true, null, _selectedChat);
-      // Șterge draft-ul după trimitere
-      _drafts.remove(_selectedChat);
-      _messageController.clear();
-    } else if (_myGroups.contains(_selectedChat)) {
-      // Mesaj în grup
-      _channel.sink.add(jsonEncode({
-        'type': 'group_message',
-        'username': widget.username,
-        'group': _selectedChat,
-        'message': message,
-      }));
-      // Adaugă mesajul în lista locală
-      _addSentMessage(message, false, _selectedChat);
-      // Șterge draft-ul după trimitere
-      _drafts.remove(_selectedChat);
-      _messageController.clear();
+    try {
+      if (_selectedChat == 'General') {
+        // Mesaj public către toți
+        _channel.sink.add(jsonEncode({
+          'type': 'message',
+          'username': widget.username,
+          'message': message,
+        }));
+        // Șterge draft-ul pentru General după trimitere
+        _drafts.remove('General');
+        _messageController.clear();
+      } else if (_users.contains(_selectedChat)) {
+        // Mesaj privat către utilizator
+        _channel.sink.add(jsonEncode({
+          'type': 'private_message',
+          'username': widget.username,
+          'target': _selectedChat,
+          'message': message,
+        }));
+        // Adaugă mesajul în lista locală
+        _addSentMessage(message, true, null, _selectedChat);
+        // Șterge draft-ul după trimitere
+        _drafts.remove(_selectedChat);
+        _messageController.clear();
+      } else if (_myGroups.contains(_selectedChat)) {
+        // Mesaj în grup
+        _channel.sink.add(jsonEncode({
+          'type': 'group_message',
+          'username': widget.username,
+          'group': _selectedChat,
+          'message': message,
+        }));
+        // Adaugă mesajul în lista locală
+        _addSentMessage(message, false, _selectedChat);
+        // Șterge draft-ul după trimitere
+        _drafts.remove(_selectedChat);
+        _messageController.clear();
+      }
+      
+      // Oprește typing indicator după trimitere
+      _sendTypingIndicator(false);
+    } catch (e) {
+      print('Eroare la trimiterea mesajului: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Eroare la trimiterea mesajului'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -396,6 +466,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _channel.sink.close();
     _messageController.dispose();
+    _typingTimer?.cancel();
     super.dispose();
   }
 
@@ -608,12 +679,24 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: Colors.white,
                       ),
                       const SizedBox(width: 10),
-                      Text(
-                        _selectedChat == 'General' ? 'Chat General' : _selectedChat,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 20,
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Text(
+                              _selectedChat == 'General' ? 'Chat General' : _selectedChat,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 20,
+                              ),
+                            ),
+                            // Typing indicator in header
+                            if (_typingUsers.containsKey(_selectedChat) && _typingUsers[_selectedChat]!)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 10),
+                                child: _TypingIndicator(),
+                              ),
+                          ],
                         ),
                       ),
                     ],
@@ -635,8 +718,12 @@ class _ChatScreenState extends State<ChatScreen> {
                             return const SizedBox.shrink();
                           }
                         } else if (_users.contains(_selectedChat)) {
-                          if (!msg.isPrivate || 
-                              (msg.target != _selectedChat && msg.username != _selectedChat)) {
+                          // Arată mesajul dacă e privat și e în conversația curentă
+                          if (!msg.isPrivate) {
+                            return const SizedBox.shrink();
+                          }
+                          // Arată mesajul dacă e de la sau către utilizatorul selectat
+                          if (msg.target != _selectedChat && msg.username != _selectedChat) {
                             return const SizedBox.shrink();
                           }
                         } else if (_myGroups.contains(_selectedChat)) {
@@ -658,6 +745,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       Expanded(
                         child: TextField(
                           controller: _messageController,
+                          onChanged: _onTextChanged,
                           decoration: InputDecoration(
                             hintText: _getHintText(),
                             filled: true,
@@ -758,24 +846,187 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _handleDisconnect() {
     if (mounted) {
+      setState(() {
+        _isConnected = false;
+      });
+      
+      // Încearcă să se reconecteze automat la fiecare 3 secunde
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+        if (_isConnected) {
+          timer.cancel();
+          return;
+        }
+        
+        _reconnectAttempts++;
+        print('Încercare reconectare #$_reconnectAttempts');
+        
+        try {
+          final testChannel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+          final completer = Completer<bool>();
+          
+          // Timeout de 2 secunde
+          Timer? timeoutTimer = Timer(const Duration(seconds: 2), () {
+            testChannel.sink.close();
+            if (!completer.isCompleted) {
+              completer.complete(false);
+            }
+          });
+          
+          testChannel.stream.listen(
+            (message) {
+              timeoutTimer?.cancel();
+              testChannel.sink.close();
+              if (!completer.isCompleted) {
+                completer.complete(true);
+              }
+            },
+            onError: (error) {
+              timeoutTimer?.cancel();
+              testChannel.sink.close();
+              if (!completer.isCompleted) {
+                completer.complete(false);
+              }
+            },
+          );
+          
+          final connected = await completer.future;
+          
+          if (connected && mounted) {
+            timer.cancel();
+            _reconnectTimer = null;
+            // Reconectare completă
+            _connectToServer();
+          }
+        } catch (e) {
+          print('Eroare reconectare: $e');
+        }
+      });
+      
+      // Afișează dialog cu opțiunea de a reveni la login sau de a aștepta reconectarea
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text('Deconectat'),
-          content: const Text('Conexiunea cu serverul s-a pierdut. Vei fi redirecționat spre pagina de autentificare.'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).popUntil((route) => route.isFirst);
-              },
-              child: const Text('OK'),
+        builder: (context) => WillPopScope(
+          onWillPop: () async {
+            _reconnectTimer?.cancel();
+            _reconnectTimer = null;
+            Navigator.of(context).pop();
+            Navigator.of(context).popUntil((route) => route.isFirst);
+            return true;
+          },
+          child: AlertDialog(
+            title: const Text('Deconectat'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Conexiunea cu serverul s-a pierdut.'),
+                const SizedBox(height: 10),
+                const Text('Se încearcă reconectarea automată...'),
+                const SizedBox(height: 10),
+                if (_isConnected)
+                  const Text(
+                    'Conectat cu succes!',
+                    style: TextStyle(color: Colors.green),
+                  )
+                else
+                  const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 10),
+                      Text('Încercare reconectare...'),
+                    ],
+                  ),
+              ],
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: () {
+                  _reconnectTimer?.cancel();
+                  _reconnectTimer = null;
+                  Navigator.of(context).pop();
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                },
+                child: const Text('Înapoi la autentificare'),
+              ),
+            ],
+          ),
         ),
       );
     }
+  }
+}
+
+// Widget pentru typing indicator animat
+class _TypingIndicator extends StatefulWidget {
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  int _dotCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat();
+    _controller.addListener(() {
+      final frame = _controller.value * 3;
+      setState(() {
+        _dotCount = (frame % 3).toInt();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Text(
+          'scrie',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (index) {
+            return AnimatedOpacity(
+              opacity: index <= _dotCount ? 1.0 : 0.3,
+              duration: const Duration(milliseconds: 200),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1),
+                child: Text(
+                  '.',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
   }
 }
 

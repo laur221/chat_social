@@ -38,6 +38,22 @@ async def handle_client(websocket: websockets.WebSocketServerProtocol):
                 msg_type = data.get("type")
 
                 # =========================
+                # Typing indicator
+                # =========================
+                if msg_type == "typing" and username:
+                    target = data.get("target")
+                    is_typing = data.get("typing", True)
+                    
+                    # Trimite indicatorul de typing către destinatar
+                    if target in user_connections and target != username:
+                        await user_connections[target].send(json.dumps({
+                            "type": "typing",
+                            "username": username,
+                            "typing": is_typing,
+                            "target": target
+                        }))
+                
+                # =========================
                 # Autentificare
                 # =========================
                 if msg_type == "auth":

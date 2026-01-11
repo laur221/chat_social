@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'chat.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -77,6 +79,19 @@ class _LoginScreenState extends State<LoginScreen> {
                 onPressed: () async {
                   final username = usernameController.text.trim();
                   final password = passwordController.text.trim();
+
+                  // Verifică dacă serverul este online
+                  final serverOnline = await checkServerOnline();
+                  if (!serverOnline && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Serverul nu este online!'),
+                        backgroundColor: Colors.red,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    return;
+                  }
 
                   final isAuthenticated = await authenticateUser(username, password);
 
@@ -158,6 +173,37 @@ class _PasswordFieldState extends State<PasswordField> {
         ),
       ),
     );
+  }
+}
+
+Future<bool> checkServerOnline() async {
+  try {
+    // Încearcă să se conecteze
+    final channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+    final completer = Completer<bool>();
+    
+    // Așteaptă puțin pentru a vedea dacă conexiunea reușește
+    Timer(const Duration(milliseconds: 500), () {
+      if (!completer.isCompleted) {
+        channel.sink.close();
+        completer.complete(true);
+      }
+    });
+    
+    // Dacă apare eroare la conexiune
+    channel.stream.listen(
+      (message) {},
+      onError: (error) {
+        channel.sink.close();
+        if (!completer.isCompleted) {
+          completer.complete(false);
+        }
+      },
+    );
+    
+    return completer.future;
+  } catch (e) {
+    return false;
   }
 }
 
