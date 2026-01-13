@@ -6,22 +6,13 @@ from typing import Set, Dict
 from websockets.legacy.server import WebSocketServerProtocol
 import os
 import logging
+from aiohttp import web
 
 # ===============================
 # Configure logging
 # ===============================
 logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
 logging.getLogger("websockets.protocol").setLevel(logging.CRITICAL)
-
-# ===============================
-# Process request (pentru health check)
-# ===============================
-async def process_request(path, request_headers):
-    upgrade = request_headers.get("Upgrade", "").lower()
-    if upgrade == "websocket":
-        return None  # permite upgrade la WebSocket
-    # Health check HTTP pe WebSocket
-    return (200, [("Content-Type", "text/plain")], b"OK")
 
 # ===============================
 # Conexiuni
@@ -113,6 +104,12 @@ async def handle_client(websocket: WebSocketServerProtocol):
             await broadcast_user_list()
 
 # ===============================
+# Health check handler HTTP
+# ===============================
+async def health_check(request: web.Request):
+    return web.Response(text="OK", status=200)
+
+# ===============================
 # Main server
 # ===============================
 async def main():
@@ -120,15 +117,25 @@ async def main():
     host = "0.0.0.0"
 
     print("="*50)
-    print(f"Server WebSocket pentru Chat Social")
-    print(f"Ascultă pe ws://{host}:{port}")
+    print(f"Server WebSocket + HTTP pentru Chat Social")
+    print(f"WebSocket pe ws://{host}:{port}")
+    print(f"Health check HTTP la http://{host}:{port}/")
     print("="*50)
     
-    # Rulează serverul WebSocket infinit
-    async with websockets.serve(handle_client, host, port, process_request=process_request):
-        print("[DEBUG] Server WebSocket pornit și ascultă conexiuni...", flush=True)
-        # Ține serverul pornit
-        await asyncio.Future()  # rulează infinit
+    # Creare aplicație HTTP
+    http_app = web.Application()
+    http_app.router.add_get("/", health_check)
+    
+    # Pornire server HTTP (pentru health checks)
+    runner = web.AppRunner(http_app)
+    await runner.setup()
+    http_site = web.TCPSite(runner, host, port)
+    
+    # Pornire server WebSocket
+    ws_server = websockets.serve(handle_client, host, port)
+    
+    # Rulează ambele servere
+    await asyncio.gather(http_site.start(), ws_server)
 
 if __name__ == "__main__":
     try:

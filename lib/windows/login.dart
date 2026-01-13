@@ -12,7 +12,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-const host = 'wss://chat-social-ng2d.onrender.com:8080';
+const host = 'wss://chat-social-ng2d.onrender.com:10000';
 
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
@@ -249,7 +249,7 @@ Future<bool> checkServerOnline() async {
     print('[DEBUG] Încep verificarea serverului...');
 
     // Încearcă să se conecteze
-    final channel = WebSocketChannel.connect(Uri.parse('$host'));
+    final channel = WebSocketChannel.connect(Uri.parse(host));
     print('[DEBUG] Încerc să mă conectez la: $host');
     final completer = Completer<bool>();
 
