@@ -13,7 +13,7 @@ class ChatScreen extends StatefulWidget {
   @override
   State<ChatScreen> createState() => ChatScreenState();
 }
-const host = 'wss://chat-social-ng2d.onrender.com:10000';
+const host = 'wss://chat-social-ng2d.onrender.com/ws';
 
 class ChatScreenState extends State<ChatScreen> {
   late WebSocketChannel channel;
@@ -927,7 +927,7 @@ class ChatScreenState extends State<ChatScreen> {
           final completer = Completer<bool>();
 
           // Timeout de 2 secunde
-          Timer? timeoutTimer = Timer(const Duration(seconds: 20), () {
+          Timer? timeoutTimer = Timer(const Duration(seconds: 2), () {
             testChannel.sink.close();
             if (!completer.isCompleted) {
               completer.complete(false);

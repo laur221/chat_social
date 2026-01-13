@@ -12,7 +12,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-const host = 'wss://chat-social-ng2d.onrender.com:10000';
+const host = 'wss://chat-social-ng2d.onrender.com/ws';
 
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
@@ -254,7 +254,7 @@ Future<bool> checkServerOnline() async {
     final completer = Completer<bool>();
 
     // Timeout de 5 secunde pentru conexiune
-    Timer(const Duration(seconds: 100), () {
+    Timer(const Duration(seconds: 5), () {
       if (!completer.isCompleted) {
         print('[DEBUG] Timeout atins. Serverul nu a răspuns.');
         channel.sink.close();

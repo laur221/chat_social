@@ -56,16 +56,9 @@ async def broadcast_user_list():
             print(f"Eroare la trimitere lista către {client_username}: {e}", flush=True)
 
 # ===============================
-# WebSocket upgrade handler
+# WebSocket handler pe path /ws
 # ===============================
 async def websocket_handler(request: web.Request):
-    # Verifică dacă este WebSocket upgrade sau health check
-    if request.headers.get("Upgrade", "").lower() != "websocket":
-        # Health check - returnează OK
-        print(f"[DEBUG] Health check de la {request.remote}", flush=True)
-        return web.Response(text="OK", status=200)
-    
-    # WebSocket upgrade
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
@@ -114,7 +107,7 @@ async def websocket_handler(request: web.Request):
     return ws
 
 # ===============================
-# Health check handler
+# Health check handler pe root /
 # ===============================
 async def health_check(request: web.Request):
     print(f"[DEBUG] Health check de la {request.remote}", flush=True)
@@ -129,15 +122,18 @@ async def main():
 
     print("="*50)
     print(f"Server WebSocket pentru Chat Social")
-    print(f"Ascultă pe ws://{host}:{port}")
+    print(f"WebSocket la ws://{host}:{port}/ws")
     print(f"Health check la http://{host}:{port}/")
     print("="*50)
     
     # Creare aplicație
     app = web.Application()
     
-    # Route pentru WebSocket upgrade la root
-    app.router.add_get("/", websocket_handler)
+    # Route pentru health check la root
+    app.router.add_get("/", health_check)
+    
+    # Route pentru WebSocket la /ws
+    app.router.add_get("/ws", websocket_handler)
     
     # Pornire server
     runner = web.AppRunner(app)
