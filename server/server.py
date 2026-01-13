@@ -2,26 +2,39 @@ import asyncio
 import websockets
 import json
 from datetime import datetime
+from typing import Set, Dict
 from websockets.legacy.server import WebSocketServerProtocol
 import os
 import logging
-from typing import Set, Dict
+from aiohttp import web
 
-# Suprimare erori handshake pentru health checks
+# ===============================
+# Configure logging
+# ===============================
 logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
 logging.getLogger("websockets.protocol").setLevel(logging.CRITICAL)
 
 # ===============================
-# Conexiuni și grupuri
+# Process request (pentru health check WebSocket)
+# ===============================
+async def process_request(path, request_headers):
+    upgrade = request_headers.get("Upgrade", "").lower()
+    if upgrade == "websocket":
+        return None  # permite upgrade la WebSocket
+    # Health check HTTP pe WebSocket
+    return (200, [("Content-Type", "text/plain")], b"OK")
+
+# ===============================
+# Conexiuni
 # ===============================
 connected_clients: Set[WebSocketServerProtocol] = set()
 user_connections: Dict[str, WebSocketServerProtocol] = {}
 groups: Dict[str, Set[str]] = {"General": set()}
 
 # ===============================
-# Încarcă utilizatorii și parolele din fișier
+# Încarcă utilizatorii și parolele
 # ===============================
-def load_credentials(file_path="password.txt"):
+def load_credentials(file_path):
     credentials = {}
     if os.path.exists(file_path):
         with open(file_path, "r") as file:
@@ -32,17 +45,7 @@ def load_credentials(file_path="password.txt"):
                     credentials[username] = password
     return credentials
 
-user_credentials = load_credentials()
-
-# ===============================
-# Health check pentru Render
-# ===============================
-async def process_request(path, request_headers):
-    upgrade = request_headers.get("Upgrade", "").lower()
-    if upgrade == "websocket":
-        return None  # permite upgrade WebSocket
-    # răspuns simplu pentru health checks
-    return (200, [("Content-Type", "text/plain")], b"OK")
+user_credentials = load_credentials("password.txt")
 
 # ===============================
 # Broadcast mesaje
@@ -56,88 +59,96 @@ async def broadcast_message(message: dict):
     )
 
 async def broadcast_user_list():
-    for username, ws in user_connections.items():
-        other_users = [u for u in user_connections.keys() if u != username]
+    for client_username, client_ws in user_connections.items():
+        other_users = [u for u in user_connections.keys() if u != client_username]
         try:
-            await ws.send(json.dumps({"type": "user_list", "users": other_users}))
-        except:
-            pass
+            await client_ws.send(
+                json.dumps({"type": "user_list", "users": other_users})
+            )
+        except Exception as e:
+            print(f"Eroare la trimitere lista către {client_username}: {e}", flush=True)
 
 # ===============================
-# Handler client
+# WebSocket handler
 # ===============================
-async def handle_client(ws: WebSocketServerProtocol):
-    print(f"[DEBUG] Client conectat: {ws.remote_address}", flush=True)
-    connected_clients.add(ws)
+async def handle_client(websocket: WebSocketServerProtocol):
+    print(f"[DEBUG] Client conectat: {websocket.remote_address}", flush=True)
+    connected_clients.add(websocket)
     username = None
 
     try:
-        async for msg in ws:
+        async for message in websocket:
             try:
-                data = json.loads(msg)
-            except json.JSONDecodeError:
-                continue
+                data = json.loads(message)
+                msg_type = data.get("type")
 
-            msg_type = data.get("type")
+                if msg_type == "auth":
+                    username = data.get("username")
+                    password = data.get("password")
+                    if username in user_credentials and user_credentials[username] == password:
+                        user_connections[username] = websocket
+                        await websocket.send(json.dumps({"type": "auth_success","message": "Autentificare reușită"}))
+                    else:
+                        await websocket.send(json.dumps({"type": "auth_error","message": "Username sau parolă greșită"}))
 
-            if msg_type == "auth":
-                username = data.get("username")
-                password = data.get("password")
-                if username in user_credentials and user_credentials[username] == password:
-                    user_connections[username] = ws
-                    await ws.send(json.dumps({"type": "auth_success", "message": "Autentificare reușită"}))
-                    print(f"[DEBUG] Autentificat: {username}", flush=True)
-                else:
-                    await ws.send(json.dumps({"type": "auth_error", "message": "Username/parolă greșită"}))
-
-            elif msg_type == "message" and username:
-                text = data.get("message", "")
-                await broadcast_message({
-                    "type": "message",
-                    "username": username,
-                    "message": text,
-                    "timestamp": datetime.now().isoformat()
-                })
-                print(f"{username}: {text}", flush=True)
-
-            elif msg_type == "private_message" and username:
-                target = data.get("target")
-                text = data.get("message", "")
-                if target in user_connections:
-                    await user_connections[target].send(json.dumps({
-                        "type": "private_message",
+                elif msg_type == "message" and username:
+                    msg_text = data.get("message", "")
+                    await broadcast_message({
+                        "type": "message",
                         "username": username,
-                        "target": target,
-                        "message": text,
-                        "timestamp": datetime.now().isoformat()
-                    }))
+                        "message": msg_text,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+
+                # Mai multe tipuri de mesaje (grup, PM, typing etc.) se pot păstra ca în codul tău
+
+            except json.JSONDecodeError:
+                print(f"[DEBUG] Mesaj JSON invalid: {message}", flush=True)
 
     except websockets.exceptions.ConnectionClosed:
-        pass
+        print(f"[DEBUG] Conexiune închisă: {websocket.remote_address}", flush=True)
     finally:
-        connected_clients.discard(ws)
+        connected_clients.discard(websocket)
         if username and username in user_connections:
             del user_connections[username]
-        await broadcast_user_list()
-        print(f"[DEBUG] Client deconectat: {username}", flush=True)
+            for group_name in groups:
+                groups[group_name].discard(username)
+            await broadcast_user_list()
 
 # ===============================
-# Main
+# HTTP health check endpoint
+# ===============================
+async def health(request):
+    return web.Response(text="OK")
+
+# ===============================
+# Main server
 # ===============================
 async def main():
+    port = int(os.environ.get("PORT", 8080))  # Render folosește PORT
     host = "0.0.0.0"
-    port = int(os.environ.get("PORT", 8080))  # folosește portul din Render
 
-    print("="*50, flush=True)
-    print("Server WebSocket pentru Chat Social", flush=True)
-    print(f"Ascultă pe ws://{host}:{port}", flush=True)
-    print("="*50, flush=True)
+    print("="*50)
+    print(f"Server WebSocket + HTTP pentru Chat Social")
+    print(f"Ascultă pe ws://{host}:{port}")
+    print(f"Health check HTTP la http://{host}:{port}/")
+    print("="*50)
 
-    async with websockets.serve(handle_client, host, port, process_request=process_request):
-        await asyncio.Future()  # infinit
+    # Pornim server WebSocket
+    ws_server = websockets.serve(handle_client, host, port, process_request=process_request)
+
+    # Pornim server HTTP cu aiohttp (health check)
+    http_app = web.Application()
+    http_app.router.add_get("/", health)
+    runner = web.AppRunner(http_app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+
+    # Rulează ambele servere concurent
+    await asyncio.gather(ws_server, site.start())
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nServer oprit.", flush=True)
+        print("\nServer oprit.")
