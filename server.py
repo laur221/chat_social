@@ -1,31 +1,39 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Server WebSocket pentru Chat Social
-Rulează pe ws://localhost:8080
-Compatibil cu websockets >= 12
-"""
-
 import asyncio
 import websockets
 import json
 from datetime import datetime
 from typing import Set, Dict
+from websockets.server import WebSocketServer
+import os
 
 # ===============================
 # Stocare conexiuni
 # ===============================
-connected_clients: Set[websockets.WebSocketServerProtocol] = set()
-user_connections: Dict[str, websockets.WebSocketServerProtocol] = {}
+connected_clients: Set[WebSocketServer] = set()
+user_connections: Dict[str, WebSocketServer] = {}
 # Grupele cu membrii lor: {nume_grup: [nume_utilizator1, nume_utilizator2, ...]}
 groups: Dict[str, Set[str]] = {"General": set()}
 
+# ===============================
+# Încarcă utilizatorii și parolele din fișier
+# ===============================
+def load_credentials(file_path):
+    credentials = {}
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as file:
+            for line in file:
+                parts = line.strip().split(':')
+                if len(parts) == 2:
+                    username, password = parts
+                    credentials[username] = password
+    return credentials
+
+user_credentials = load_credentials('password.txt')
 
 # ===============================
-# Handler client (FĂRĂ path!)
+# Autentificare pe server (mutată în handle_client)
 # ===============================
-async def handle_client(websocket: websockets.WebSocketServerProtocol):
+async def handle_client(websocket: WebSocketServer):
     print(f"Client conectat. Total clienți: {len(connected_clients) + 1}")
 
     connected_clients.add(websocket)
@@ -38,9 +46,30 @@ async def handle_client(websocket: websockets.WebSocketServerProtocol):
                 msg_type = data.get("type")
 
                 # =========================
+                # Autentificare
+                # =========================
+                if msg_type == "auth":
+                    username = data.get("username")
+                    password = data.get("password")
+
+                    # Verifică utilizatorul și parola
+                    if username in user_credentials and user_credentials[username] == password:
+                        user_connections[username] = websocket
+                        await websocket.send(json.dumps({
+                            "type": "auth_success",
+                            "message": "Autentificare reușită"
+                        }))
+                        print(f"Utilizator autentificat: {username}")
+                    else:
+                        await websocket.send(json.dumps({
+                            "type": "auth_error",
+                            "message": "Nume de utilizator sau parolă greșită"
+                        }))
+
+                # =========================
                 # Typing indicator
                 # =========================
-                if msg_type == "typing" and username:
+                elif msg_type == "typing" and username:
                     target = data.get("target")
                     is_typing = data.get("typing", True)
                     
@@ -53,26 +82,6 @@ async def handle_client(websocket: websockets.WebSocketServerProtocol):
                             "target": target
                         }))
                 
-                # =========================
-                # Autentificare
-                # =========================
-                if msg_type == "auth":
-                    username = data.get("username")
-
-                    if not username:
-                        continue
-
-                    if username in user_connections:
-                        await websocket.send(json.dumps({
-                            "type": "error",
-                            "message": "Username deja folosit"
-                        }))
-                        continue
-
-                    user_connections[username] = websocket
-                    print(f"Utilizator autentificat: {username}")
-                    await broadcast_user_list()
-
                 # =========================
                 # Mesaj public (Chat General)
                 # =========================
@@ -220,13 +229,16 @@ async def broadcast_user_list():
 # Main server
 # ===============================
 async def main():
+    host = "0.0.0.0"  # Ascultă pe toate interfețele de rețea
+    port = 8080
+
     print("=" * 50)
     print("Server WebSocket pentru Chat Social")
-    print("Rulare pe: ws://localhost:8080")
+    print(f"Rulare pe: ws://{host}:{port}")
     print("Ctrl+C pentru oprire")
     print("=" * 50)
 
-    async with websockets.serve(handle_client, "localhost", 8080):
+    async with websockets.serve(handle_client, host, port):
         print("Server pornit cu succes! Aștept conexiuni...")
         await asyncio.Future()  # rulează infinit
 

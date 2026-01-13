@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'chat.dart';
+import 'dart:convert';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,6 +15,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
   late final TextEditingController passwordController;
+  bool _isLoading = false; // Adăugat pentru a gestiona starea de încărcare
 
   @override
   void initState() {
@@ -75,58 +77,102 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () async {
-                  final username = usernameController.text.trim();
-                  final password = passwordController.text.trim();
+              _isLoading
+                  ? const CircularProgressIndicator() // Indicator de încărcare
+                  : ElevatedButton(
+                      onPressed: () async {
+                        setState(() {
+                          _isLoading = true;
+                        });
 
-                  // Verifică dacă serverul este online
-                  final serverOnline = await checkServerOnline();
-                  if (!serverOnline && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Serverul nu este online!'),
-                        backgroundColor: Colors.red,
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    return;
-                  }
+                        final username = usernameController.text.trim();
+                        final password = passwordController.text.trim();
 
-                  final isAuthenticated = await authenticateUser(username, password);
+                        try {
+                          print('[DEBUG] Încep procesul de autentificare pentru utilizatorul: $username');
 
-                  if (isAuthenticated && mounted) {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ChatScreen(username: username),
+                          // Verifică dacă serverul este online înainte de autentificare
+                          final serverOnline = await checkServerOnline();
+                          if (!serverOnline) {
+                            print('[DEBUG] Serverul nu este online.');
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Serverul nu este online!'),
+                                  backgroundColor: Colors.red,
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                            setState(() {
+                              _isLoading = false;
+                            });
+                            return;
+                          }
+
+                          print('[DEBUG] Serverul este online. Continuăm cu autentificarea...');
+
+                          // Trimite datele de autentificare la server
+                          final channel = WebSocketChannel.connect(Uri.parse('wss://dazaiosamu222.pythonanywhere.com'));
+                          channel.sink.add(jsonEncode({
+                            "type": "auth",
+                            "username": username,
+                            "password": password,
+                          }));
+
+                          channel.stream.listen((message) {
+                            final data = jsonDecode(message);
+                            if (data['type'] == 'auth_success') {
+                              print('[DEBUG] Autentificare reușită pentru utilizatorul: $username');
+                              Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ChatScreen(username: username),
+                                ),
+                              );
+                            } else if (data['type'] == 'auth_error') {
+                              print('[DEBUG] Autentificare eșuată: ${data['message']}');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(data['message']),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          });
+                        } catch (e) {
+                          print('[DEBUG] Excepție în procesul de autentificare: $e');
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('A apărut o eroare: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        } finally {
+                          setState(() {
+                            _isLoading = false;
+                          });
+                          print('[DEBUG] Procesul de autentificare s-a încheiat.');
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color.fromARGB(255, 201, 173, 167),
+                        foregroundColor: const Color.fromARGB(255, 26, 27, 37),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 40,
+                          vertical: 15,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
                       ),
-                    );
-                  } else if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Nume de utilizator sau parolă greșită!'),
-                        backgroundColor: Color(0xFFFFC1C1),
+                      child: const Text(
+                        'Autentificare',
+                        style: TextStyle(fontSize: 18),
                       ),
-                    );
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color.fromARGB(255, 201, 173, 167),
-                  foregroundColor: const Color.fromARGB(255, 26, 27, 37),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 40,
-                    vertical: 15,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                child: const Text(
-                  'Autentificare',
-                  style: TextStyle(fontSize: 18),
-                ),
-              ),
+                    ),
               const SizedBox(height: 50),
             ],
           ),
@@ -178,31 +224,53 @@ class _PasswordFieldState extends State<PasswordField> {
 
 Future<bool> checkServerOnline() async {
   try {
+    print('[DEBUG] Încep verificarea serverului...');
+
     // Încearcă să se conecteze
-    final channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+    final channel = WebSocketChannel.connect(Uri.parse('wss://dazaiosamu222.pythonanywhere.com:8080'));
+    print('[DEBUG] Încerc să mă conectez la: wss://dazaiosamu222.pythonanywhere.com:8080');
     final completer = Completer<bool>();
-    
-    // Așteaptă puțin pentru a vedea dacă conexiunea reușește
-    Timer(const Duration(milliseconds: 500), () {
+
+    // Timeout de 2 secunde pentru conexiune
+    Timer(const Duration(seconds: 2), () {
       if (!completer.isCompleted) {
+        print('[DEBUG] Timeout atins. Serverul nu a răspuns.');
         channel.sink.close();
-        completer.complete(true);
+        completer.complete(false);
       }
     });
-    
-    // Dacă apare eroare la conexiune
+
+    // Ascultă mesajele sau erorile
     channel.stream.listen(
-      (message) {},
-      onError: (error) {
-        channel.sink.close();
+      (message) {
+        print('[DEBUG] Conexiune reușită cu serverul.');
         if (!completer.isCompleted) {
+          channel.sink.close();
+          completer.complete(true);
+        }
+      },
+      onError: (error) {
+        print('[DEBUG] Eroare la conectarea la server: $error');
+        if (!completer.isCompleted) {
+          channel.sink.close();
+          completer.complete(false);
+        }
+      },
+      onDone: () {
+        print('[DEBUG] Conexiunea cu serverul s-a încheiat.');
+        if (!completer.isCompleted) {
+          channel.sink.close();
           completer.complete(false);
         }
       },
     );
-    
+
     return completer.future;
+  } on SocketException catch (e) {
+    print('[DEBUG] SocketException: $e');
+    return false;
   } catch (e) {
+    print('[DEBUG] Excepție necunoscută în checkServerOnline: $e');
     return false;
   }
 }

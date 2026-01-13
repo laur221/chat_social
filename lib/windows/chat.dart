@@ -11,39 +11,39 @@ class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.username});
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  State<ChatScreen> createState() => ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
-  late WebSocketChannel _channel;
-  final List<String> _users = [];
-  final List<ChatMessage> _messages = [];
-  final TextEditingController _messageController = TextEditingController();
-  String _selectedChat = 'General';
-  final List<String> _groups = [];
+class ChatScreenState extends State<ChatScreen> {
+  late WebSocketChannel channel;
+  final List<String> users = [];
+  final List<ChatMessage> messages = [];
+  final TextEditingController messageController = TextEditingController();
+  String selectedChat = 'General';
+  final List<String> groups = [];
   // Stocăm grupurile la care utilizatorul este membru
-  final Set<String> _myGroups = {'General'};
+  final Set<String> myGroups = {'General'};
   // Draft-uri pentru fiecare chat: {chat_id: draft_text}
-  final Map<String, String> _drafts = {};
+  final Map<String, String> drafts = {};
   // Contor mesaje necitite: {chat_id: count}
-  final Map<String, int> _unreadCounts = {};
+  final Map<String, int> unreadCounts = {};
   // Pinned chats (users and groups)
-  final Set<String> _pinnedChats = {};
+  final Set<String> pinnedChats = {};
   // Typing indicator: {username: bool}
-  final Map<String, bool> _typingUsers = {};
+  final Map<String, bool> typingUsers = {};
   // Typing debounce timer
-  Timer? _typingTimer;
+  Timer? typingTimer;
   // Reconnect attempt counter
-  int _reconnectAttempts = 0;
+  int reconnectAttempts = 0;
   // Reconnect timer
-  Timer? _reconnectTimer;
+  Timer? reconnectTimer;
   // Connection status
-  bool _isConnected = false;
+  bool isConnected = false;
 
   @override
   void initState() {
     super.initState();
-    _connectToServer();
+    connectToServer();
     // Schimbă dimensiunea ferestrei la 1200x800
     Future.delayed(const Duration(milliseconds: 100), () {
       setWindowFrame(const Rect.fromLTWH(100, 100, 1200, 800));
@@ -52,56 +52,56 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _connectToServer() {
+  void connectToServer() {
     try {
-      _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
-      _channel.stream.listen(
+      channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+      channel.stream.listen(
         (message) {
           // Reset reconnect attempts on successful connection
           setState(() {
-            _isConnected = true;
-            _reconnectAttempts = 0;
+            isConnected = true;
+            reconnectAttempts = 0;
           });
           final data = jsonDecode(message) as Map<String, dynamic>;
-          _handleServerMessage(data);
+          handleServerMessage(data);
         },
         onError: (error) {
           print('Eroare WebSocket: $error');
-          _handleDisconnect();
+          handleDisconnect();
         },
         onDone: () {
           print('WebSocket deconectat');
-          _handleDisconnect();
+          handleDisconnect();
         },
       );
 
       // Trimite autentificarea
-      _channel.sink.add(jsonEncode({
+      channel.sink.add(jsonEncode({
         'type': 'auth',
         'username': widget.username,
       }));
     } catch (e) {
       print('Eroare la conectare: $e');
-      _handleDisconnect();
+      handleDisconnect();
     }
   }
 
-  void _handleServerMessage(Map<String, dynamic> data) {
+  void handleServerMessage(Map<String, dynamic> data) {
     if (!mounted) return;
     
     try {
       setState(() {
         switch (data['type'] as String) {
           case 'user_list':
-            _users.clear();
-            _users.addAll((data['users'] as List).cast<String>());
+            users.clear();
+            users.addAll((data['users'] as List).cast<String>());
             break;
           case 'typing':
             final sender = data['username'] as String;
             final target = data['target'] as String;
             final isTyping = data['typing'] as bool;
             if (target == widget.username) {
-              _typingUsers[sender] = isTyping;
+              typingUsers[sender] = isTyping;
             }
             break;
           case 'message':
@@ -112,10 +112,10 @@ class _ChatScreenState extends State<ChatScreen> {
               isPrivate: false,
               group: 'General',
             );
-            _messages.add(msg);
+            messages.add(msg);
             // Increment unread count for General
-            if (_selectedChat != 'General') {
-              _unreadCounts['General'] = (_unreadCounts['General'] ?? 0) + 1;
+            if (selectedChat != 'General') {
+              unreadCounts['General'] = (unreadCounts['General'] ?? 0) + 1;
             }
             break;
           case 'private_message':
@@ -128,10 +128,10 @@ class _ChatScreenState extends State<ChatScreen> {
               isPrivate: true,
               target: target,
             );
-            _messages.add(msg);
+            messages.add(msg);
             // Increment unread count for the sender
-            if (_selectedChat != sender && target == widget.username) {
-              _unreadCounts[sender] = (_unreadCounts[sender] ?? 0) + 1;
+            if (selectedChat != sender && target == widget.username) {
+              unreadCounts[sender] = (unreadCounts[sender] ?? 0) + 1;
             }
             break;
           case 'group_message':
@@ -146,28 +146,28 @@ class _ChatScreenState extends State<ChatScreen> {
                 isPrivate: false,
                 group: group,
               );
-              _messages.add(msg);
+              messages.add(msg);
               // Increment unread count for group
-              if (_selectedChat != group) {
-                _unreadCounts[group] = (_unreadCounts[group] ?? 0) + 1;
+              if (selectedChat != group) {
+                unreadCounts[group] = (unreadCounts[group] ?? 0) + 1;
               }
             }
             break;
           case 'group_created':
             final groupName = data['group_name'] as String;
-            if (!_groups.contains(groupName)) {
-              _groups.add(groupName);
+            if (!groups.contains(groupName)) {
+              groups.add(groupName);
               if (data['creator'] == widget.username) {
-                _myGroups.add(groupName);
+                myGroups.add(groupName);
               }
             }
             break;
           case 'added_to_group':
             final groupName = data['group_name'] as String;
-            if (!_myGroups.contains(groupName)) {
-              _myGroups.add(groupName);
-              if (!_groups.contains(groupName)) {
-                _groups.add(groupName);
+            if (!myGroups.contains(groupName)) {
+              myGroups.add(groupName);
+              if (!groups.contains(groupName)) {
+                groups.add(groupName);
               }
             }
             break;
@@ -178,48 +178,48 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Salvează draft-ul curent înainte de a schimba chat-ul
-  void _saveCurrentDraft() {
-    if (_messageController.text.isNotEmpty) {
-      _drafts[_selectedChat] = _messageController.text;
+  // Salveaza draft-ul curent înainte de a schimba chat-ul
+  void saveCurrentDraft() {
+    if (messageController.text.isNotEmpty) {
+      drafts[selectedChat] = messageController.text;
     }
   }
 
   // Încarcă draft-ul pentru un chat
-  void _loadDraft(String chatId) {
-    _messageController.text = _drafts[chatId] ?? '';
+  void loadDraft(String chatId) {
+    messageController.text = drafts[chatId] ?? '';
   }
 
   // Schimbă chat-ul și gestionează draft-urile
-  void _changeChat(String newChat) {
-    _saveCurrentDraft();
+  void changeChat(String newChat) {
+    saveCurrentDraft();
     // Clear unread count when opening chat
     setState(() {
-      _selectedChat = newChat;
-      _unreadCounts.remove(newChat);
+      selectedChat = newChat;
+      unreadCounts.remove(newChat);
     });
-    _loadDraft(newChat);
+    loadDraft(newChat);
   }
 
   // Toggle pin/unpin
-  void _togglePin(String chatId) {
+  void togglePin(String chatId) {
     setState(() {
-      if (_pinnedChats.contains(chatId)) {
-        _pinnedChats.remove(chatId);
+      if (pinnedChats.contains(chatId)) {
+        pinnedChats.remove(chatId);
       } else {
-        _pinnedChats.add(chatId);
+        pinnedChats.add(chatId);
       }
     });
   }
 
   // Trimite typing indicator
-  void _sendTypingIndicator(bool isTyping) {
+  void sendTypingIndicator(bool isTyping) {
     try {
-      if (_users.contains(_selectedChat)) {
-        _channel.sink.add(jsonEncode({
+      if (users.contains(selectedChat)) {
+        channel.sink.add(jsonEncode({
           'type': 'typing',
           'username': widget.username,
-          'target': _selectedChat,
+          'target': selectedChat,
           'typing': isTyping,
         }));
       }
@@ -229,31 +229,31 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // Gestionează schimbarea textului pentru typing indicator
-  void _onTextChanged(String text) {
+  void onTextChanged(String text) {
     // Trimite typing indicator
-    _sendTypingIndicator(true);
+    sendTypingIndicator(true);
     
     // Resetează timer-ul
-    _typingTimer?.cancel();
-    _typingTimer = Timer(const Duration(seconds: 2), () {
+    typingTimer?.cancel();
+    typingTimer = Timer(const Duration(seconds: 2), () {
       // Dacă nu mai scrie, trimite indicator stop
-      _sendTypingIndicator(false);
+      sendTypingIndicator(false);
     });
   }
 
   // Sort users: pinned first, then unread, then alphabetical
-  List<String> _getSortedUsers() {
-    final sorted = List<String>.from(_users);
+  List<String> getSortedUsers() {
+    final sorted = List<String>.from(users);
     sorted.sort((a, b) {
       // Pinned first
-      final aPinned = _pinnedChats.contains(a);
-      final bPinned = _pinnedChats.contains(b);
+      final aPinned = pinnedChats.contains(a);
+      final bPinned = pinnedChats.contains(b);
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
       
       // Unread next
-      final aUnread = _unreadCounts.containsKey(a) && _unreadCounts[a]! > 0;
-      final bUnread = _unreadCounts.containsKey(b) && _unreadCounts[b]! > 0;
+      final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
+      final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
       if (aUnread && !bUnread) return -1;
       if (!aUnread && bUnread) return 1;
       
@@ -264,22 +264,22 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // Sort groups: pinned first, then unread, then alphabetical
-  List<String> _getSortedGroups() {
-    final sorted = _myGroups.toList();
+  List<String> getSortedGroups() {
+    final sorted = myGroups.toList();
     sorted.sort((a, b) {
       // General always first
       if (a == 'General') return -1;
       if (b == 'General') return 1;
       
       // Pinned
-      final aPinned = _pinnedChats.contains(a);
-      final bPinned = _pinnedChats.contains(b);
+      final aPinned = pinnedChats.contains(a);
+      final bPinned = pinnedChats.contains(b);
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
       
       // Unread
-      final aUnread = _unreadCounts.containsKey(a) && _unreadCounts[a]! > 0;
-      final bUnread = _unreadCounts.containsKey(b) && _unreadCounts[b]! > 0;
+      final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
+      final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
       if (aUnread && !bUnread) return -1;
       if (!aUnread && bUnread) return 1;
       
@@ -289,51 +289,51 @@ class _ChatScreenState extends State<ChatScreen> {
     return sorted;
   }
 
-  void _sendMessage() {
-    final message = _messageController.text.trim();
+  void sendMessage() {
+    final message = messageController.text.trim();
     if (message.isEmpty) return;
 
     try {
-      if (_selectedChat == 'General') {
+      if (selectedChat == 'General') {
         // Mesaj public către toți
-        _channel.sink.add(jsonEncode({
+        channel.sink.add(jsonEncode({
           'type': 'message',
           'username': widget.username,
           'message': message,
         }));
         // Șterge draft-ul pentru General după trimitere
-        _drafts.remove('General');
-        _messageController.clear();
-      } else if (_users.contains(_selectedChat)) {
+        drafts.remove('General');
+        messageController.clear();
+      } else if (users.contains(selectedChat)) {
         // Mesaj privat către utilizator
-        _channel.sink.add(jsonEncode({
+        channel.sink.add(jsonEncode({
           'type': 'private_message',
           'username': widget.username,
-          'target': _selectedChat,
+          'target': selectedChat,
           'message': message,
         }));
         // Adaugă mesajul în lista locală
-        _addSentMessage(message, true, null, _selectedChat);
+        addSentMessage(message, true, null, selectedChat);
         // Șterge draft-ul după trimitere
-        _drafts.remove(_selectedChat);
-        _messageController.clear();
-      } else if (_myGroups.contains(_selectedChat)) {
+        drafts.remove(selectedChat);
+        messageController.clear();
+      } else if (myGroups.contains(selectedChat)) {
         // Mesaj în grup
-        _channel.sink.add(jsonEncode({
+        channel.sink.add(jsonEncode({
           'type': 'group_message',
           'username': widget.username,
-          'group': _selectedChat,
+          'group': selectedChat,
           'message': message,
         }));
         // Adaugă mesajul în lista locală
-        _addSentMessage(message, false, _selectedChat);
+        addSentMessage(message, false, selectedChat);
         // Șterge draft-ul după trimitere
-        _drafts.remove(_selectedChat);
-        _messageController.clear();
+        drafts.remove(selectedChat);
+        messageController.clear();
       }
       
       // Oprește typing indicator după trimitere
-      _sendTypingIndicator(false);
+      sendTypingIndicator(false);
     } catch (e) {
       print('Eroare la trimiterea mesajului: $e');
       if (mounted) {
@@ -347,9 +347,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _addSentMessage(String message, bool isPrivate, String? group, [String? target]) {
+  void addSentMessage(String message, bool isPrivate, String? group, [String? target]) {
     setState(() {
-      _messages.add(ChatMessage(
+      messages.add(ChatMessage(
         username: widget.username,
         message: message,
         timestamp: DateTime.now(),
@@ -360,7 +360,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _createGroup() {
+  void createGroup() {
     TextEditingController groupController = TextEditingController();
     showDialog(
       context: context,
@@ -379,7 +379,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () {
               final groupName = groupController.text.trim();
               if (groupName.isNotEmpty && mounted) {
-                _channel.sink.add(jsonEncode({
+                channel.sink.add(jsonEncode({
                   'type': 'create_group',
                   'group_name': groupName,
                   'username': widget.username,
@@ -394,8 +394,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _addToGroup(String groupName) {
-    if (_users.isEmpty) {
+  void addToGroup(String groupName) {
+    if (users.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Nu sunt utilizatori disponibili'),
@@ -405,7 +405,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    String selectedUser = _users.first;
+    String selectedUser = users.first;
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -413,7 +413,7 @@ class _ChatScreenState extends State<ChatScreen> {
           title: Text('Adaugă în $groupName'),
           content: DropdownButton<String>(
             value: selectedUser,
-            items: _users.map((user) {
+            items: users.map((user) {
               return DropdownMenuItem<String>(
                 value: user,
                 child: Text(user),
@@ -434,7 +434,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             TextButton(
               onPressed: () {
-                _channel.sink.add(jsonEncode({
+                channel.sink.add(jsonEncode({
                   'type': 'add_to_group',
                   'group_name': groupName,
                   'member': selectedUser,
@@ -464,9 +464,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    _channel.sink.close();
-    _messageController.dispose();
-    _typingTimer?.cancel();
+    channel.sink.close();
+    messageController.dispose();
+    typingTimer?.cancel();
     super.dispose();
   }
 
@@ -510,12 +510,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
-                ..._getSortedGroups().map((group) => ListTile(
+                ...getSortedGroups().map((group) => ListTile(
                       leading: Stack(
                         children: [
                           const Icon(Icons.group),
                           // Red circle indicator for unread
-                          if (_unreadCounts.containsKey(group) && _unreadCounts[group]! > 0)
+                          if (unreadCounts.containsKey(group) && unreadCounts[group]! > 0)
                             Positioned(
                               top: 0,
                               right: 0,
@@ -529,7 +529,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                                 child: Center(
                                   child: Text(
-                                    _unreadCounts[group]! > 99 ? '99+' : '${_unreadCounts[group]}',
+                                    unreadCounts[group]! > 99 ? '99+' : '${unreadCounts[group]}',
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 10,
@@ -545,39 +545,39 @@ class _ChatScreenState extends State<ChatScreen> {
                         children: [
                           Expanded(child: Text(group)),
                           // Draft indicator
-                          if (_drafts.containsKey(group) && _drafts[group]!.isNotEmpty)
+                          if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(left:4),
-                              child: Icon(Icons.edit_note, size: 14, color: Colors.yellow[700]),
+                              child: Icon(Icons.edit_note, size: 14, color: const Color.fromARGB(255, 103, 80, 164)),
                             ),
                         ],
                       ),
-                      selected: _selectedChat == group,
+                      selected: selectedChat == group,
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           // Pin button
                           IconButton(
                             icon: Icon(
-                              _pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
+                              pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
                               size: 18,
                             ),
-                            onPressed: () => _togglePin(group),
+                            onPressed: () => togglePin(group),
                           ),
                           // Add member button
                           if (group != 'General')
                             IconButton(
                               icon: const Icon(Icons.add_circle, size: 18),
-                              onPressed: () => _addToGroup(group),
+                              onPressed: () => addToGroup(group),
                             ),
                         ],
                       ),
-                      onTap: () => _changeChat(group),
+                      onTap: () => changeChat(group),
                     )),
                 ListTile(
                   leading: const Icon(Icons.add),
                   title: const Text('Creează grup'),
-                  onTap: _createGroup,
+                  onTap: createGroup,
                 ),
                 const Divider(),
                 const Padding(
@@ -592,9 +592,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 Expanded(
                   child: ListView.builder(
-                    itemCount: _getSortedUsers().length,
+                    itemCount: getSortedUsers().length,
                     itemBuilder: (context, index) {
-                      final user = _getSortedUsers()[index];
+                      final user = getSortedUsers()[index];
                       return ListTile(
                         leading: Stack(
                           children: [
@@ -609,7 +609,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                             // Red circle indicator for unread
-                            if (_unreadCounts.containsKey(user) && _unreadCounts[user]! > 0)
+                            if (unreadCounts.containsKey(user) && unreadCounts[user]! > 0)
                               Positioned(
                                 top: -2,
                                 right: -2,
@@ -623,7 +623,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                   child: Center(
                                     child: Text(
-                                      _unreadCounts[user]! > 99 ? '99+' : '${_unreadCounts[user]}',
+                                      unreadCounts[user]! > 99 ? '99+' : '${unreadCounts[user]}',
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 10,
@@ -639,7 +639,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           children: [
                             Expanded(child: Text(user)),
                             // Draft indicator
-                            if (_drafts.containsKey(user) && _drafts[user]!.isNotEmpty)
+                            if (drafts.containsKey(user) && drafts[user]!.isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.only(left:4),
                                 child: Icon(Icons.edit_note, size: 14, color: Colors.yellow[700]),
@@ -648,13 +648,13 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         trailing: IconButton(
                           icon: Icon(
-                            _pinnedChats.contains(user) ? Icons.push_pin : Icons.push_pin_outlined,
+                            pinnedChats.contains(user) ? Icons.push_pin : Icons.push_pin_outlined,
                             size: 18,
                           ),
-                          onPressed: () => _togglePin(user),
+                          onPressed: () => togglePin(user),
                         ),
-                        selected: _selectedChat == user,
-                        onTap: () => _changeChat(user),
+                        selected: selectedChat == user,
+                        onTap: () => changeChat(user),
                       );
                     },
                   ),
@@ -673,7 +673,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Row(
                     children: [
                       Icon(
-                        _users.contains(_selectedChat)
+                        users.contains(selectedChat)
                             ? Icons.person
                             : Icons.group,
                         color: Colors.white,
@@ -683,7 +683,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: Row(
                           children: [
                             Text(
-                              _selectedChat == 'General' ? 'Chat General' : _selectedChat,
+                              selectedChat == 'General' ? 'Chat General' : selectedChat,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -691,10 +691,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                             // Typing indicator in header
-                            if (_typingUsers.containsKey(_selectedChat) && _typingUsers[_selectedChat]!)
+                            if (typingUsers.containsKey(selectedChat) && typingUsers[selectedChat]!)
                               Padding(
                                 padding: const EdgeInsets.only(left: 10),
-                                child: _TypingIndicator(),
+                                child: TypingIndicator(),
                               ),
                           ],
                         ),
@@ -708,16 +708,16 @@ class _ChatScreenState extends State<ChatScreen> {
                     color: Colors.white,
                     child: ListView.builder(
                       padding: const EdgeInsets.all(16),
-                      itemCount: _messages.length,
+                      itemCount: messages.length,
                       itemBuilder: (context, index) {
-                        final msg = _messages[index];
+                        final msg = messages[index];
                         final isMe = msg.username == widget.username;
                         // Filtrează mesajele în funcție de chat-ul selectat
-                        if (_selectedChat == 'General') {
+                        if (selectedChat == 'General') {
                           if (msg.isPrivate || msg.group != 'General') {
                             return const SizedBox.shrink();
                           }
-                        } else if (_users.contains(_selectedChat)) {
+                        } else if (users.contains(selectedChat)) {
                           // Arată doar mesajele private
                           if (!msg.isPrivate) {
                             return const SizedBox.shrink();
@@ -725,15 +725,15 @@ class _ChatScreenState extends State<ChatScreen> {
                           // Arată mesajul dacă sunt în conversația cu sender sau target
                           final otherUser = msg.username == widget.username ? msg.target : msg.username;
                           // Verifică dacă otherUser nu este null
-                          if (otherUser == null || otherUser != _selectedChat) {
+                          if (otherUser == null || otherUser != selectedChat) {
                             return const SizedBox.shrink();
                           }
-                        } else if (_myGroups.contains(_selectedChat)) {
-                          if (msg.group != _selectedChat || msg.isPrivate) {
+                        } else if (myGroups.contains(selectedChat)) {
+                          if (msg.group != selectedChat || msg.isPrivate) {
                             return const SizedBox.shrink();
                           }
                         }
-                        return _buildMessageBubble(msg, isMe);
+                        return buildMessageBubble(msg, isMe);
                       },
                     ),
                   ),
@@ -746,10 +746,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       Expanded(
                         child: TextField(
-                          controller: _messageController,
-                          onChanged: _onTextChanged,
+                          controller: messageController,
+                          onChanged: onTextChanged,
                           decoration: InputDecoration(
-                            hintText: _getHintText(),
+                            hintText: getHintText(),
                             filled: true,
                             fillColor: Colors.white,
                             border: OutlineInputBorder(
@@ -761,12 +761,12 @@ class _ChatScreenState extends State<ChatScreen> {
                               vertical: 15,
                             ),
                           ),
-                          onSubmitted: (_) => _sendMessage(),
+                          onSubmitted: (_) => sendMessage(),
                         ),
                       ),
                       const SizedBox(width: 10),
                       IconButton(
-                        onPressed: _sendMessage,
+                        onPressed: sendMessage,
                         icon: const Icon(Icons.send),
                         style: IconButton.styleFrom(
                           backgroundColor: const Color.fromARGB(255, 201, 173, 167),
@@ -785,17 +785,17 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  String _getHintText() {
-    if (_selectedChat == 'General') {
+  String getHintText() {
+    if (selectedChat == 'General') {
       return 'Scrie un mesaj public...';
-    } else if (_users.contains(_selectedChat)) {
-      return 'Scrie un mesaj privat către $_selectedChat...';
+    } else if (users.contains(selectedChat)) {
+      return 'Scrie un mesaj privat către $selectedChat...';
     } else {
-      return 'Scrie în grupul $_selectedChat...';
+      return 'Scrie în grupul $selectedChat...';
     }
   }
 
-  Widget _buildMessageBubble(ChatMessage msg, bool isMe) {
+  Widget buildMessageBubble(ChatMessage msg, bool isMe) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -830,7 +830,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(height:4),
             Text(
-              _formatTime(msg.timestamp),
+              formatTime(msg.timestamp),
               style: TextStyle(
                 fontSize: 10,
                 color: isMe ? Colors.white70 : Colors.grey,
@@ -842,26 +842,26 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  String _formatTime(DateTime timestamp) {
+  String formatTime(DateTime timestamp) {
     return '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
   }
 
-  void _handleDisconnect() {
+  void handleDisconnect() {
     if (mounted) {
       setState(() {
-        _isConnected = false;
+        isConnected = false;
       });
       
       // Încearcă să se reconecteze automat la fiecare 3 secunde
-      _reconnectTimer?.cancel();
-      _reconnectTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-        if (_isConnected) {
+      reconnectTimer?.cancel();
+      reconnectTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+        if (isConnected) {
           timer.cancel();
           return;
         }
         
-        _reconnectAttempts++;
-        print('Încercare reconectare #$_reconnectAttempts');
+        reconnectAttempts++;
+        print('Încercare reconectare #$reconnectAttempts');
         
         try {
           final testChannel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
@@ -896,9 +896,9 @@ class _ChatScreenState extends State<ChatScreen> {
           
           if (connected && mounted) {
             timer.cancel();
-            _reconnectTimer = null;
+            reconnectTimer = null;
             // Reconectare completă
-            _connectToServer();
+            connectToServer();
           }
         } catch (e) {
           print('Eroare reconectare: $e');
@@ -911,8 +911,8 @@ class _ChatScreenState extends State<ChatScreen> {
         barrierDismissible: false,
         builder: (context) => WillPopScope(
           onWillPop: () async {
-            _reconnectTimer?.cancel();
-            _reconnectTimer = null;
+            reconnectTimer?.cancel();
+            reconnectTimer = null;
             Navigator.of(context).pop();
             Navigator.of(context).popUntil((route) => route.isFirst);
             return true;
@@ -926,7 +926,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(height: 10),
                 const Text('Se încearcă reconectarea automată...'),
                 const SizedBox(height: 10),
-                if (_isConnected)
+                if (isConnected)
                   const Text(
                     'Conectat cu succes!',
                     style: TextStyle(color: Colors.green),
@@ -949,8 +949,8 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: [
               TextButton(
                 onPressed: () {
-                  _reconnectTimer?.cancel();
-                  _reconnectTimer = null;
+                  reconnectTimer?.cancel();
+                  reconnectTimer = null;
                   Navigator.of(context).pop();
                   Navigator.of(context).popUntil((route) => route.isFirst);
                 },
@@ -965,34 +965,34 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // Widget pentru typing indicator animat
-class _TypingIndicator extends StatefulWidget {
+class TypingIndicator extends StatefulWidget {
   @override
-  State<_TypingIndicator> createState() => _TypingIndicatorState();
+  State<TypingIndicator> createState() => TypingIndicatorState();
 }
 
-class _TypingIndicatorState extends State<_TypingIndicator>
+class TypingIndicatorState extends State<TypingIndicator>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  int _dotCount = 0;
+  late AnimationController controller;
+  int dotCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+    controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
-    _controller.addListener(() {
-      final frame = _controller.value * 3;
+    controller.addListener(() {
+      final frame = controller.value * 3;
       setState(() {
-        _dotCount = (frame % 3).toInt();
+        dotCount = (frame % 3).toInt();
       });
     });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    controller.dispose();
     super.dispose();
   }
 
@@ -1012,7 +1012,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
           mainAxisSize: MainAxisSize.min,
           children: List.generate(3, (index) {
             return AnimatedOpacity(
-              opacity: index <= _dotCount ? 1.0 : 0.3,
+              opacity: index <= dotCount ? 1.0 : 0.3,
               duration: const Duration(milliseconds: 200),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 1),
