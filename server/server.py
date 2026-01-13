@@ -60,25 +60,24 @@ async def broadcast_user_list():
 # ===============================
 async def websocket_handler(request: web.Request):
     print(f"[DEBUG] WebSocket request received from {request.remote}", flush=True)
-    print(f"[DEBUG] Headers: {dict(request.headers)}", flush=True)
     
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
     print(f"[DEBUG] WebSocket connection established with {request.remote}", flush=True)
-    print(f"[DEBUG] Current connected clients: {len(connected_clients)}", flush=True)
     
     connected_clients.add(ws)
     username = None
 
     try:
+        # Trimite welcome message imediat
+        await ws.send_str(json.dumps({"type": "welcome", "message": "Conectat la server"}))
+        print(f"[DEBUG] Welcome message sent to {request.remote}", flush=True)
+        
         async for msg in ws:
-            print(f"[DEBUG] Received message type: {msg.type}", flush=True)
-            
             if msg.type == web.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
-                    print(f"[DEBUG] Received JSON: {data}", flush=True)
                     msg_type = data.get("type")
 
                     if msg_type == "auth":
@@ -125,7 +124,6 @@ async def websocket_handler(request: web.Request):
                 groups[group_name].discard(username)
             await broadcast_user_list()
     
-    print(f"[DEBUG] WebSocket handler finished for {username or 'unknown'}", flush=True)
     return ws
 
 # ===============================
