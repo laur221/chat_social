@@ -13,7 +13,7 @@ class ChatScreen extends StatefulWidget {
   @override
   State<ChatScreen> createState() => ChatScreenState();
 }
-  const host = 'kridderurt-ancient-surf-5936.fly.dev';
+  const host = 'chat-social-ng2d.onrender.com';
   const port = 8080;
 
 class ChatScreenState extends State<ChatScreen> {
@@ -56,7 +56,7 @@ class ChatScreenState extends State<ChatScreen> {
 
   void connectToServer() {
     try {
-      channel = WebSocketChannel.connect(Uri.parse('wss://$host:$port'));
+      channel = WebSocketChannel.connect(Uri.parse('wss://$host'));
       channel.stream.listen(
         (message) {
           // Reset reconnect attempts on successful connection
@@ -923,7 +923,7 @@ class ChatScreenState extends State<ChatScreen> {
 
         try {
           final testChannel = WebSocketChannel.connect(
-            Uri.parse('wss://$host:$port'),
+            Uri.parse('wss://$host'),
           );
           final completer = Completer<bool>();
 
