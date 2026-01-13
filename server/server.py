@@ -23,13 +23,21 @@ groups: Dict[str, Set[str]] = {"General": set()}
 # ===============================
 def load_credentials(file_path):
     credentials = {}
+    print(f"[DEBUG] Loading credentials from: {file_path}", flush=True)
+    
     if os.path.exists(file_path):
+        print(f"[DEBUG] File {file_path} exists", flush=True)
         with open(file_path, "r") as file:
             for line in file:
                 parts = line.strip().split(":")
                 if len(parts) == 2:
                     username, password = parts
                     credentials[username] = password
+                    print(f"[DEBUG] Loaded user: {username}", flush=True)
+    else:
+        print(f"[DEBUG] File {file_path} NOT FOUND!", flush=True)
+    
+    print(f"[DEBUG] Total credentials loaded: {len(credentials)}", flush=True)
     return credentials
 
 user_credentials = load_credentials("password.txt")
@@ -83,7 +91,11 @@ async def websocket_handler(request: web.Request):
                     if msg_type == "auth":
                         username = data.get("username")
                         password = data.get("password")
-                        print(f"[DEBUG] Auth attempt - User: {username}", flush=True)
+                        print(f"[DEBUG] Auth attempt - User: '{username}', Password: '{password}'", flush=True)
+                        print(f"[DEBUG] User exists in credentials: {username in user_credentials}", flush=True)
+                        
+                        if username in user_credentials:
+                            print(f"[DEBUG] Stored password for {username}: '{user_credentials[username]}'", flush=True)
                         
                         if username in user_credentials and user_credentials[username] == password:
                             user_connections[username] = ws
