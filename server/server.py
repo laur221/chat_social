@@ -40,7 +40,7 @@ def load_credentials(file_path):
     print(f"[DEBUG] Total credentials loaded: {len(credentials)}", flush=True)
     return credentials
 
-user_credentials = load_credentials("password.txt")
+user_credentials = load_credentials("/etc/secrets/password.txt")
 
 # ===============================
 # Broadcast mesaje
