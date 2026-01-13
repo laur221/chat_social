@@ -1,9 +1,7 @@
 import asyncio
-import websockets
 import json
 from datetime import datetime
 from typing import Set, Dict
-from websockets.legacy.server import WebSocketServerProtocol
 import os
 import logging
 from aiohttp import web
@@ -11,14 +9,13 @@ from aiohttp import web
 # ===============================
 # Configure logging
 # ===============================
-logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
-logging.getLogger("websockets.protocol").setLevel(logging.CRITICAL)
+logging.getLogger("aiohttp.server").setLevel(logging.CRITICAL)
 
 # ===============================
 # Conexiuni
 # ===============================
-connected_clients: Set[WebSocketServerProtocol] = set()
-user_connections: Dict[str, WebSocketServerProtocol] = {}
+connected_clients: Set[web.WebSocketResponse] = set()
+user_connections: Dict[str, web.WebSocketResponse] = {}
 groups: Dict[str, Set[str]] = {"General": set()}
 
 # ===============================
@@ -45,68 +42,82 @@ async def broadcast_message(message: dict):
         return
     msg = json.dumps(message)
     await asyncio.gather(
-        *[client.send(msg) for client in connected_clients], return_exceptions=True
+        *[ws.send_str(msg) for ws in connected_clients], return_exceptions=True
     )
 
 async def broadcast_user_list():
     for client_username, client_ws in user_connections.items():
         other_users = [u for u in user_connections.keys() if u != client_username]
         try:
-            await client_ws.send(
+            await client_ws.send_str(
                 json.dumps({"type": "user_list", "users": other_users})
             )
         except Exception as e:
             print(f"Eroare la trimitere lista către {client_username}: {e}", flush=True)
 
 # ===============================
-# WebSocket handler
+# WebSocket upgrade handler
 # ===============================
-async def handle_client(websocket: WebSocketServerProtocol):
-    print(f"[DEBUG] Client conectat: {websocket.remote_address}", flush=True)
-    connected_clients.add(websocket)
+async def websocket_handler(request: web.Request):
+    # Verifică dacă este WebSocket upgrade sau health check
+    if request.headers.get("Upgrade", "").lower() != "websocket":
+        # Health check - returnează OK
+        print(f"[DEBUG] Health check de la {request.remote}", flush=True)
+        return web.Response(text="OK", status=200)
+    
+    # WebSocket upgrade
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    
+    print(f"[DEBUG] Client conectat: {request.remote}", flush=True)
+    connected_clients.add(ws)
     username = None
 
     try:
-        async for message in websocket:
-            try:
-                data = json.loads(message)
-                msg_type = data.get("type")
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    msg_type = data.get("type")
 
-                if msg_type == "auth":
-                    username = data.get("username")
-                    password = data.get("password")
-                    if username in user_credentials and user_credentials[username] == password:
-                        user_connections[username] = websocket
-                        await websocket.send(json.dumps({"type": "auth_success","message": "Autentificare reușită"}))
-                    else:
-                        await websocket.send(json.dumps({"type": "auth_error","message": "Username sau parolă greșită"}))
+                    if msg_type == "auth":
+                        username = data.get("username")
+                        password = data.get("password")
+                        if username in user_credentials and user_credentials[username] == password:
+                            user_connections[username] = ws
+                            await ws.send_str(json.dumps({"type": "auth_success", "message": "Autentificare reușită"}))
+                        else:
+                            await ws.send_str(json.dumps({"type": "auth_error", "message": "Username sau parolă greșită"}))
 
-                elif msg_type == "message" and username:
-                    msg_text = data.get("message", "")
-                    await broadcast_message({
-                        "type": "message",
-                        "username": username,
-                        "message": msg_text,
-                        "timestamp": datetime.now().isoformat(),
-                    })
+                    elif msg_type == "message" and username:
+                        msg_text = data.get("message", "")
+                        await broadcast_message({
+                            "type": "message",
+                            "username": username,
+                            "message": msg_text,
+                            "timestamp": datetime.now().isoformat(),
+                        })
 
-            except json.JSONDecodeError:
-                print(f"[DEBUG] Mesaj JSON invalid: {message}", flush=True)
+                except json.JSONDecodeError:
+                    print(f"[DEBUG] Mesaj JSON invalid: {msg.data}", flush=True)
 
-    except websockets.exceptions.ConnectionClosed:
-        print(f"[DEBUG] Conexiune închisă: {websocket.remote_address}", flush=True)
+    except Exception as e:
+        print(f"[DEBUG] Eroare WebSocket: {e}", flush=True)
     finally:
-        connected_clients.discard(websocket)
+        connected_clients.discard(ws)
         if username and username in user_connections:
             del user_connections[username]
             for group_name in groups:
                 groups[group_name].discard(username)
             await broadcast_user_list()
+    
+    return ws
 
 # ===============================
-# Health check handler HTTP
+# Health check handler
 # ===============================
 async def health_check(request: web.Request):
+    print(f"[DEBUG] Health check de la {request.remote}", flush=True)
     return web.Response(text="OK", status=200)
 
 # ===============================
@@ -117,25 +128,30 @@ async def main():
     host = "0.0.0.0"
 
     print("="*50)
-    print(f"Server WebSocket + HTTP pentru Chat Social")
-    print(f"WebSocket pe ws://{host}:{port}")
-    print(f"Health check HTTP la http://{host}:{port}/")
+    print(f"Server WebSocket pentru Chat Social")
+    print(f"Ascultă pe ws://{host}:{port}")
+    print(f"Health check la http://{host}:{port}/")
     print("="*50)
     
-    # Creare aplicație HTTP
-    http_app = web.Application()
-    http_app.router.add_get("/", health_check)
+    # Creare aplicație
+    app = web.Application()
     
-    # Pornire server HTTP (pentru health checks)
-    runner = web.AppRunner(http_app)
+    # Route pentru WebSocket upgrade la root
+    app.router.add_get("/", websocket_handler)
+    
+    # Pornire server
+    runner = web.AppRunner(app)
     await runner.setup()
-    http_site = web.TCPSite(runner, host, port)
+    site = web.TCPSite(runner, host, port)
     
-    # Pornire server WebSocket
-    ws_server = websockets.serve(handle_client, host, port)
+    print(f"[DEBUG] Server pornit și ascultă...", flush=True)
+    await site.start()
     
-    # Rulează ambele servere
-    await asyncio.gather(http_site.start(), ws_server)
+    # Ține serverul pornit
+    try:
+        await asyncio.Future()
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
     try:
