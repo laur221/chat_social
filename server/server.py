@@ -35,9 +35,13 @@ def load_credentials(file_path):
                     credentials[username] = password
                     print(f"[DEBUG] Loaded user: {username}", flush=True)
     else:
-        print(f"[DEBUG] File {file_path} NOT FOUND!", flush=True)
+        print(f"[DEBUG] File {file_path} NOT FOUND! Using defaults", flush=True)
+        # Default user pentru testing
+        credentials["1"] = "1"
+        credentials["2"] = "2"
     
     print(f"[DEBUG] Total credentials loaded: {len(credentials)}", flush=True)
+    print(f"[DEBUG] Available users: {list(credentials.keys())}", flush=True)
     return credentials
 
 user_credentials = load_credentials("/etc/secrets/password.txt")
@@ -45,23 +49,28 @@ user_credentials = load_credentials("/etc/secrets/password.txt")
 # ===============================
 # Broadcast mesaje
 # ===============================
-async def broadcast_message(message: dict):
+async def broadcast_message(message: dict, exclude_ws: web.WebSocketResponse = None):
     if not connected_clients:
         return
     msg = json.dumps(message)
+    
+    # Broadcast la toți clienții, cu excepție opțională
+    targets = [ws for ws in connected_clients if ws != exclude_ws]
     await asyncio.gather(
-        *[ws.send_str(msg) for ws in connected_clients], return_exceptions=True
+        *[ws.send_str(msg) for ws in targets], return_exceptions=True
     )
 
 async def broadcast_user_list():
+    """Broadcast lista de utilizatori la toți clienții autentificați"""
     for client_username, client_ws in user_connections.items():
         other_users = [u for u in user_connections.keys() if u != client_username]
         try:
             await client_ws.send_str(
                 json.dumps({"type": "user_list", "users": other_users})
             )
+            print(f"[DEBUG] Sent user_list to {client_username}: {other_users}", flush=True)
         except Exception as e:
-            print(f"Eroare la trimitere lista către {client_username}: {e}", flush=True)
+            print(f"[DEBUG] Error sending user_list to {client_username}: {e}", flush=True)
 
 # ===============================
 # WebSocket handler pe path /ws
@@ -100,20 +109,128 @@ async def websocket_handler(request: web.Request):
                         if username in user_credentials and user_credentials[username] == password:
                             user_connections[username] = ws
                             print(f"[DEBUG] Auth SUCCESS for {username}", flush=True)
+                            
+                            # Trimite auth_success
                             await ws.send_str(json.dumps({"type": "auth_success", "message": "Autentificare reușită"}))
+                            
+                            # Trimite lista de utilizatori
+                            await broadcast_user_list()
+                            
                         else:
                             print(f"[DEBUG] Auth FAILED for {username}", flush=True)
                             await ws.send_str(json.dumps({"type": "auth_error", "message": "Username sau parolă greșită"}))
 
                     elif msg_type == "message" and username:
                         msg_text = data.get("message", "")
-                        print(f"[DEBUG] Message from {username}: {msg_text}", flush=True)
+                        print(f"[DEBUG] Public message from {username}: {msg_text}", flush=True)
                         await broadcast_message({
                             "type": "message",
                             "username": username,
                             "message": msg_text,
                             "timestamp": datetime.now().isoformat(),
                         })
+
+                    elif msg_type == "private_message" and username:
+                        target = data.get("target")
+                        msg_text = data.get("message", "")
+                        print(f"[DEBUG] Private message from {username} to {target}", flush=True)
+                        
+                        # Trimite la destinatar
+                        if target in user_connections:
+                            target_ws = user_connections[target]
+                            await target_ws.send_str(json.dumps({
+                                "type": "private_message",
+                                "username": username,
+                                "target": target,
+                                "message": msg_text,
+                                "timestamp": datetime.now().isoformat(),
+                            }))
+                            print(f"[DEBUG] Private message sent to {target}", flush=True)
+                        else:
+                            print(f"[DEBUG] Target {target} not connected", flush=True)
+                            # Informă expeditorul că destinatarul nu e online
+                            await ws.send_str(json.dumps({
+                                "type": "error",
+                                "message": f"Utilizatorul {target} nu este conectat"
+                            }))
+
+                    elif msg_type == "create_group" and username:
+                        group_name = data.get("group_name")
+                        if group_name and group_name not in groups:
+                            groups[group_name] = set()
+                            groups[group_name].add(username)
+                            print(f"[DEBUG] Group created: {group_name} by {username}", flush=True)
+                            
+                            # Trimite confirmare expeditorului
+                            await ws.send_str(json.dumps({
+                                "type": "group_created",
+                                "group_name": group_name,
+                                "creator": username
+                            }))
+                            
+                            # Broadcast la toți
+                            await broadcast_message({
+                                "type": "group_created",
+                                "group_name": group_name,
+                                "creator": username
+                            })
+                        else:
+                            print(f"[DEBUG] Group {group_name} already exists", flush=True)
+
+                    elif msg_type == "add_to_group" and username:
+                        group_name = data.get("group_name")
+                        member = data.get("member")
+                        print(f"[DEBUG] Add {member} to group {group_name} by {username}", flush=True)
+                        
+                        if group_name in groups and member in user_connections:
+                            groups[group_name].add(member)
+                            print(f"[DEBUG] Added {member} to {group_name}", flush=True)
+                            
+                            # Trimite confirmare expeditorului
+                            await ws.send_str(json.dumps({
+                                "type": "added_to_group",
+                                "group_name": group_name
+                            }))
+                            
+                            # Trimite notificare membrului adăugat
+                            member_ws = user_connections[member]
+                            await member_ws.send_str(json.dumps({
+                                "type": "added_to_group",
+                                "group_name": group_name
+                            }))
+
+                    elif msg_type == "group_message" and username:
+                        group_name = data.get("group")
+                        msg_text = data.get("message", "")
+                        print(f"[DEBUG] Group message from {username} in {group_name}", flush=True)
+                        
+                        # Trimite la toți membrii grupului
+                        if group_name in groups:
+                            for member in groups[group_name]:
+                                if member in user_connections:
+                                    member_ws = user_connections[member]
+                                    await member_ws.send_str(json.dumps({
+                                        "type": "group_message",
+                                        "username": username,
+                                        "group": group_name,
+                                        "message": msg_text,
+                                        "timestamp": datetime.now().isoformat(),
+                                    }))
+                            print(f"[DEBUG] Group message sent to {len(groups[group_name])} members", flush=True)
+
+                    elif msg_type == "typing" and username:
+                        target = data.get("target")
+                        is_typing = data.get("typing", False)
+                        print(f"[DEBUG] Typing indicator from {username} to {target}: {is_typing}", flush=True)
+                        
+                        if target in user_connections:
+                            target_ws = user_connections[target]
+                            await target_ws.send_str(json.dumps({
+                                "type": "typing",
+                                "username": username,
+                                "target": target,
+                                "typing": is_typing
+                            }))
 
                 except json.JSONDecodeError as e:
                     print(f"[DEBUG] JSON decode error: {e}", flush=True)
