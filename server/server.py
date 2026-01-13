@@ -6,7 +6,6 @@ from typing import Set, Dict
 from websockets.legacy.server import WebSocketServerProtocol
 import os
 import logging
-from aiohttp import web
 
 # ===============================
 # Configure logging
@@ -15,7 +14,7 @@ logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
 logging.getLogger("websockets.protocol").setLevel(logging.CRITICAL)
 
 # ===============================
-# Process request (pentru health check WebSocket)
+# Process request (pentru health check)
 # ===============================
 async def process_request(path, request_headers):
     upgrade = request_headers.get("Upgrade", "").lower()
@@ -100,8 +99,6 @@ async def handle_client(websocket: WebSocketServerProtocol):
                         "timestamp": datetime.now().isoformat(),
                     })
 
-                # Mai multe tipuri de mesaje (grup, PM, typing etc.) se pot păstra ca în codul tău
-
             except json.JSONDecodeError:
                 print(f"[DEBUG] Mesaj JSON invalid: {message}", flush=True)
 
@@ -116,40 +113,25 @@ async def handle_client(websocket: WebSocketServerProtocol):
             await broadcast_user_list()
 
 # ===============================
-# HTTP health check endpoint
-# ===============================
-async def health(request):
-    return web.Response(text="OK")
-
-# ===============================
 # Main server
 # ===============================
 async def main():
-    ws_port = int(os.environ.get("PORT", 8080))  # Render folosește PORT pentru WebSocket
-    http_port = ws_port + 1  # HTTP pe portul următor
+    port = int(os.environ.get("PORT", 10000))
     host = "0.0.0.0"
 
     print("="*50)
-    print(f"Server WebSocket + HTTP pentru Chat Social")
-    print(f"WebSocket pe ws://{host}:{ws_port}")
-    print(f"Health check HTTP la http://{host}:{http_port}/")
+    print(f"Server WebSocket pentru Chat Social")
+    print(f"Ascultă pe ws://{host}:{port}")
     print("="*50)
-
-    # Pornim server WebSocket pe ws_port
-    ws_server = websockets.serve(handle_client, host, ws_port, process_request=process_request)
-
-    # Pornim server HTTP cu aiohttp pe http_port
-    http_app = web.Application()
-    http_app.router.add_get("/", health)
-    runner = web.AppRunner(http_app)
-    await runner.setup()
-    site = web.TCPSite(runner, host, http_port)
-
-    # Rulează ambele servere concurent
-    await asyncio.gather(ws_server, site.start())
+    
+    # Rulează serverul WebSocket infinit
+    async with websockets.serve(handle_client, host, port, process_request=process_request):
+        print("[DEBUG] Server WebSocket pornit și ascultă conexiuni...", flush=True)
+        # Ține serverul pornit
+        await asyncio.Future()  # rulează infinit
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nServer oprit.")
+        print("\nServer oprit.", flush=True)

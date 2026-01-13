@@ -12,8 +12,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-const host = 'https://chat-social-ng2d.onrender.com';
-const port = 8080;
+const host = 'wss://chat-social-ng2d.onrender.com:8080';
 
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
@@ -121,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                           // Trimite datele de autentificare la server
                           final channel = WebSocketChannel.connect(
-                            Uri.parse('ws://$host'),
+                            Uri.parse(host),
                           );
                           channel.sink.add(
                             jsonEncode({
@@ -250,8 +249,8 @@ Future<bool> checkServerOnline() async {
     print('[DEBUG] Încep verificarea serverului...');
 
     // Încearcă să se conecteze
-    final channel = WebSocketChannel.connect(Uri.parse('ws://$host'));
-    print('[DEBUG] Încerc să mă conectez la: ws://$host');
+    final channel = WebSocketChannel.connect(Uri.parse('$host'));
+    print('[DEBUG] Încerc să mă conectez la: $host');
     final completer = Completer<bool>();
 
     // Timeout de 5 secunde pentru conexiune
