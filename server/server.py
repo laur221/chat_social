@@ -59,31 +59,44 @@ async def broadcast_user_list():
 # WebSocket handler pe path /ws
 # ===============================
 async def websocket_handler(request: web.Request):
+    print(f"[DEBUG] WebSocket request received from {request.remote}", flush=True)
+    print(f"[DEBUG] Headers: {dict(request.headers)}", flush=True)
+    
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
-    print(f"[DEBUG] Client conectat: {request.remote}", flush=True)
+    print(f"[DEBUG] WebSocket connection established with {request.remote}", flush=True)
+    print(f"[DEBUG] Current connected clients: {len(connected_clients)}", flush=True)
+    
     connected_clients.add(ws)
     username = None
 
     try:
         async for msg in ws:
+            print(f"[DEBUG] Received message type: {msg.type}", flush=True)
+            
             if msg.type == web.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
+                    print(f"[DEBUG] Received JSON: {data}", flush=True)
                     msg_type = data.get("type")
 
                     if msg_type == "auth":
                         username = data.get("username")
                         password = data.get("password")
+                        print(f"[DEBUG] Auth attempt - User: {username}", flush=True)
+                        
                         if username in user_credentials and user_credentials[username] == password:
                             user_connections[username] = ws
+                            print(f"[DEBUG] Auth SUCCESS for {username}", flush=True)
                             await ws.send_str(json.dumps({"type": "auth_success", "message": "Autentificare reușită"}))
                         else:
+                            print(f"[DEBUG] Auth FAILED for {username}", flush=True)
                             await ws.send_str(json.dumps({"type": "auth_error", "message": "Username sau parolă greșită"}))
 
                     elif msg_type == "message" and username:
                         msg_text = data.get("message", "")
+                        print(f"[DEBUG] Message from {username}: {msg_text}", flush=True)
                         await broadcast_message({
                             "type": "message",
                             "username": username,
@@ -91,12 +104,20 @@ async def websocket_handler(request: web.Request):
                             "timestamp": datetime.now().isoformat(),
                         })
 
-                except json.JSONDecodeError:
-                    print(f"[DEBUG] Mesaj JSON invalid: {msg.data}", flush=True)
+                except json.JSONDecodeError as e:
+                    print(f"[DEBUG] JSON decode error: {e}", flush=True)
+            
+            elif msg.type == web.WSMsgType.ERROR:
+                print(f"[DEBUG] WebSocket error: {ws.exception()}", flush=True)
+            
+            elif msg.type == web.WSMsgType.CLOSE:
+                print(f"[DEBUG] WebSocket close message received", flush=True)
+                break
 
     except Exception as e:
-        print(f"[DEBUG] Eroare WebSocket: {e}", flush=True)
+        print(f"[DEBUG] Exception in WebSocket handler: {e}", flush=True)
     finally:
+        print(f"[DEBUG] WebSocket disconnecting {username or 'unknown user'}", flush=True)
         connected_clients.discard(ws)
         if username and username in user_connections:
             del user_connections[username]
@@ -104,6 +125,7 @@ async def websocket_handler(request: web.Request):
                 groups[group_name].discard(username)
             await broadcast_user_list()
     
+    print(f"[DEBUG] WebSocket handler finished for {username or 'unknown'}", flush=True)
     return ws
 
 # ===============================
@@ -140,7 +162,7 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     
-    print(f"[DEBUG] Server pornit și ascultă...", flush=True)
+    print(f"[DEBUG] Server pornit și ascultă pe {host}:{port}", flush=True)
     await site.start()
     
     # Ține serverul pornit
