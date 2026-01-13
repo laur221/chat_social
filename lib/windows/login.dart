@@ -12,6 +12,9 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
+const host = 'kridderurt-ancient-surf-5936.fly.dev';
+const port = 8080;
+
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
   late final TextEditingController passwordController;
@@ -89,7 +92,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         final password = passwordController.text.trim();
 
                         try {
-                          print('[DEBUG] Încep procesul de autentificare pentru utilizatorul: $username');
+                          print(
+                            '[DEBUG] Încep procesul de autentificare pentru utilizatorul: $username',
+                          );
 
                           // Verifică dacă serverul este online înainte de autentificare
                           final serverOnline = await checkServerOnline();
@@ -110,28 +115,39 @@ class _LoginScreenState extends State<LoginScreen> {
                             return;
                           }
 
-                          print('[DEBUG] Serverul este online. Continuăm cu autentificarea...');
+                          print(
+                            '[DEBUG] Serverul este online. Continuăm cu autentificarea...',
+                          );
 
                           // Trimite datele de autentificare la server
-                          final channel = WebSocketChannel.connect(Uri.parse('wss://dazaiosamu222.pythonanywhere.com'));
-                          channel.sink.add(jsonEncode({
-                            "type": "auth",
-                            "username": username,
-                            "password": password,
-                          }));
+                          final channel = WebSocketChannel.connect(
+                            Uri.parse('ws://$host:$port'),
+                          );
+                          channel.sink.add(
+                            jsonEncode({
+                              "type": "auth",
+                              "username": username,
+                              "password": password,
+                            }),
+                          );
 
                           channel.stream.listen((message) {
                             final data = jsonDecode(message);
                             if (data['type'] == 'auth_success') {
-                              print('[DEBUG] Autentificare reușită pentru utilizatorul: $username');
+                              print(
+                                '[DEBUG] Autentificare reușită pentru utilizatorul: $username',
+                              );
                               Navigator.pushReplacement(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => ChatScreen(username: username),
+                                  builder: (context) =>
+                                      ChatScreen(username: username),
                                 ),
                               );
                             } else if (data['type'] == 'auth_error') {
-                              print('[DEBUG] Autentificare eșuată: ${data['message']}');
+                              print(
+                                '[DEBUG] Autentificare eșuată: ${data['message']}',
+                              );
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(data['message']),
@@ -141,7 +157,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             }
                           });
                         } catch (e) {
-                          print('[DEBUG] Excepție în procesul de autentificare: $e');
+                          print(
+                            '[DEBUG] Excepție în procesul de autentificare: $e',
+                          );
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
@@ -154,11 +172,18 @@ class _LoginScreenState extends State<LoginScreen> {
                           setState(() {
                             _isLoading = false;
                           });
-                          print('[DEBUG] Procesul de autentificare s-a încheiat.');
+                          print(
+                            '[DEBUG] Procesul de autentificare s-a încheiat.',
+                          );
                         }
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color.fromARGB(255, 201, 173, 167),
+                        backgroundColor: const Color.fromARGB(
+                          255,
+                          201,
+                          173,
+                          167,
+                        ),
                         foregroundColor: const Color.fromARGB(255, 26, 27, 37),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 40,
@@ -208,9 +233,7 @@ class _PasswordFieldState extends State<PasswordField> {
           borderSide: BorderSide.none,
         ),
         suffixIcon: IconButton(
-          icon: Icon(
-            _isObscured ? Icons.visibility : Icons.visibility_off,
-          ),
+          icon: Icon(_isObscured ? Icons.visibility : Icons.visibility_off),
           onPressed: () {
             setState(() {
               _isObscured = !_isObscured;
@@ -227,12 +250,12 @@ Future<bool> checkServerOnline() async {
     print('[DEBUG] Încep verificarea serverului...');
 
     // Încearcă să se conecteze
-    final channel = WebSocketChannel.connect(Uri.parse('wss://dazaiosamu222.pythonanywhere.com:8080'));
-    print('[DEBUG] Încerc să mă conectez la: wss://dazaiosamu222.pythonanywhere.com:8080');
+    final channel = WebSocketChannel.connect(Uri.parse('ws://$host:$port'));
+    print('[DEBUG] Încerc să mă conectez la: ws://$host:$port');
     final completer = Completer<bool>();
 
-    // Timeout de 2 secunde pentru conexiune
-    Timer(const Duration(seconds: 2), () {
+    // Timeout de 5 secunde pentru conexiune
+    Timer(const Duration(seconds: 100), () {
       if (!completer.isCompleted) {
         print('[DEBUG] Timeout atins. Serverul nu a răspuns.');
         channel.sink.close();
@@ -258,19 +281,12 @@ Future<bool> checkServerOnline() async {
       },
       onDone: () {
         print('[DEBUG] Conexiunea cu serverul s-a încheiat.');
-        if (!completer.isCompleted) {
-          channel.sink.close();
-          completer.complete(false);
-        }
       },
     );
 
     return completer.future;
-  } on SocketException catch (e) {
-    print('[DEBUG] SocketException: $e');
-    return false;
   } catch (e) {
-    print('[DEBUG] Excepție necunoscută în checkServerOnline: $e');
+    print('[DEBUG] Eroare la verificarea serverului: $e');
     return false;
   }
 }

@@ -13,6 +13,8 @@ class ChatScreen extends StatefulWidget {
   @override
   State<ChatScreen> createState() => ChatScreenState();
 }
+  const host = 'kridderurt-ancient-surf-5936.fly.dev';
+  const port = 8080;
 
 class ChatScreenState extends State<ChatScreen> {
   late WebSocketChannel channel;
@@ -54,7 +56,7 @@ class ChatScreenState extends State<ChatScreen> {
 
   void connectToServer() {
     try {
-      channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+      channel = WebSocketChannel.connect(Uri.parse('wss://$host:$port'));
       channel.stream.listen(
         (message) {
           // Reset reconnect attempts on successful connection
@@ -76,10 +78,9 @@ class ChatScreenState extends State<ChatScreen> {
       );
 
       // Trimite autentificarea
-      channel.sink.add(jsonEncode({
-        'type': 'auth',
-        'username': widget.username,
-      }));
+      channel.sink.add(
+        jsonEncode({'type': 'auth', 'username': widget.username}),
+      );
     } catch (e) {
       print('Eroare la conectare: $e');
       handleDisconnect();
@@ -88,7 +89,7 @@ class ChatScreenState extends State<ChatScreen> {
 
   void handleServerMessage(Map<String, dynamic> data) {
     if (!mounted) return;
-    
+
     try {
       setState(() {
         switch (data['type'] as String) {
@@ -216,12 +217,14 @@ class ChatScreenState extends State<ChatScreen> {
   void sendTypingIndicator(bool isTyping) {
     try {
       if (users.contains(selectedChat)) {
-        channel.sink.add(jsonEncode({
-          'type': 'typing',
-          'username': widget.username,
-          'target': selectedChat,
-          'typing': isTyping,
-        }));
+        channel.sink.add(
+          jsonEncode({
+            'type': 'typing',
+            'username': widget.username,
+            'target': selectedChat,
+            'typing': isTyping,
+          }),
+        );
       }
     } catch (e) {
       print('Eroare la trimiterea typing indicator: $e');
@@ -232,7 +235,7 @@ class ChatScreenState extends State<ChatScreen> {
   void onTextChanged(String text) {
     // Trimite typing indicator
     sendTypingIndicator(true);
-    
+
     // Resetează timer-ul
     typingTimer?.cancel();
     typingTimer = Timer(const Duration(seconds: 2), () {
@@ -250,13 +253,13 @@ class ChatScreenState extends State<ChatScreen> {
       final bPinned = pinnedChats.contains(b);
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
-      
+
       // Unread next
       final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
       final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
       if (aUnread && !bUnread) return -1;
       if (!aUnread && bUnread) return 1;
-      
+
       // Alphabetical
       return a.compareTo(b);
     });
@@ -270,19 +273,19 @@ class ChatScreenState extends State<ChatScreen> {
       // General always first
       if (a == 'General') return -1;
       if (b == 'General') return 1;
-      
+
       // Pinned
       final aPinned = pinnedChats.contains(a);
       final bPinned = pinnedChats.contains(b);
       if (aPinned && !bPinned) return -1;
       if (!aPinned && bPinned) return 1;
-      
+
       // Unread
       final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
       final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
       if (aUnread && !bUnread) return -1;
       if (!aUnread && bUnread) return 1;
-      
+
       // Alphabetical
       return a.compareTo(b);
     });
@@ -296,22 +299,26 @@ class ChatScreenState extends State<ChatScreen> {
     try {
       if (selectedChat == 'General') {
         // Mesaj public către toți
-        channel.sink.add(jsonEncode({
-          'type': 'message',
-          'username': widget.username,
-          'message': message,
-        }));
+        channel.sink.add(
+          jsonEncode({
+            'type': 'message',
+            'username': widget.username,
+            'message': message,
+          }),
+        );
         // Șterge draft-ul pentru General după trimitere
         drafts.remove('General');
         messageController.clear();
       } else if (users.contains(selectedChat)) {
         // Mesaj privat către utilizator
-        channel.sink.add(jsonEncode({
-          'type': 'private_message',
-          'username': widget.username,
-          'target': selectedChat,
-          'message': message,
-        }));
+        channel.sink.add(
+          jsonEncode({
+            'type': 'private_message',
+            'username': widget.username,
+            'target': selectedChat,
+            'message': message,
+          }),
+        );
         // Adaugă mesajul în lista locală
         addSentMessage(message, true, null, selectedChat);
         // Șterge draft-ul după trimitere
@@ -319,19 +326,21 @@ class ChatScreenState extends State<ChatScreen> {
         messageController.clear();
       } else if (myGroups.contains(selectedChat)) {
         // Mesaj în grup
-        channel.sink.add(jsonEncode({
-          'type': 'group_message',
-          'username': widget.username,
-          'group': selectedChat,
-          'message': message,
-        }));
+        channel.sink.add(
+          jsonEncode({
+            'type': 'group_message',
+            'username': widget.username,
+            'group': selectedChat,
+            'message': message,
+          }),
+        );
         // Adaugă mesajul în lista locală
         addSentMessage(message, false, selectedChat);
         // Șterge draft-ul după trimitere
         drafts.remove(selectedChat);
         messageController.clear();
       }
-      
+
       // Oprește typing indicator după trimitere
       sendTypingIndicator(false);
     } catch (e) {
@@ -347,16 +356,23 @@ class ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void addSentMessage(String message, bool isPrivate, String? group, [String? target]) {
+  void addSentMessage(
+    String message,
+    bool isPrivate,
+    String? group, [
+    String? target,
+  ]) {
     setState(() {
-      messages.add(ChatMessage(
-        username: widget.username,
-        message: message,
-        timestamp: DateTime.now(),
-        isPrivate: isPrivate,
-        group: group,
-        target: target,
-      ));
+      messages.add(
+        ChatMessage(
+          username: widget.username,
+          message: message,
+          timestamp: DateTime.now(),
+          isPrivate: isPrivate,
+          group: group,
+          target: target,
+        ),
+      );
     });
   }
 
@@ -379,11 +395,13 @@ class ChatScreenState extends State<ChatScreen> {
             onPressed: () {
               final groupName = groupController.text.trim();
               if (groupName.isNotEmpty && mounted) {
-                channel.sink.add(jsonEncode({
-                  'type': 'create_group',
-                  'group_name': groupName,
-                  'username': widget.username,
-                }));
+                channel.sink.add(
+                  jsonEncode({
+                    'type': 'create_group',
+                    'group_name': groupName,
+                    'username': widget.username,
+                  }),
+                );
                 Navigator.pop(context);
               }
             },
@@ -414,10 +432,7 @@ class ChatScreenState extends State<ChatScreen> {
           content: DropdownButton<String>(
             value: selectedUser,
             items: users.map((user) {
-              return DropdownMenuItem<String>(
-                value: user,
-                child: Text(user),
-              );
+              return DropdownMenuItem<String>(value: user, child: Text(user));
             }).toList(),
             onChanged: (value) {
               if (value != null) {
@@ -434,23 +449,21 @@ class ChatScreenState extends State<ChatScreen> {
             ),
             TextButton(
               onPressed: () {
-                channel.sink.add(jsonEncode({
-                  'type': 'add_to_group',
-                  'group_name': groupName,
-                  'member': selectedUser,
-                }));
+                channel.sink.add(
+                  jsonEncode({
+                    'type': 'add_to_group',
+                    'group_name': groupName,
+                    'member': selectedUser,
+                  }),
+                );
                 Navigator.pop(context);
                 // Afișează mesaj foarte scurt și sus
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: const Text('Utilizator adăugat'),
                     behavior: SnackBarBehavior.floating,
-                    margin: const EdgeInsets.only(
-                      left: 20,
-                      right: 20,
-                      top: 10,
-                    ),
-                    duration: const Duration(seconds:1),
+                    margin: const EdgeInsets.only(left: 20, right: 20, top: 10),
+                    duration: const Duration(seconds: 1),
                   ),
                 );
               },
@@ -510,70 +523,90 @@ class ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
-                ...getSortedGroups().map((group) => ListTile(
-                      leading: Stack(
-                        children: [
-                          const Icon(Icons.group),
-                          // Red circle indicator for unread
-                          if (unreadCounts.containsKey(group) && unreadCounts[group]! > 0)
-                            Positioned(
-                              top: 0,
-                              right: 0,
-                              child: Container(
-                                width: 18,
-                                height: 18,
-                                decoration: BoxDecoration(
-                                  color: Colors.red,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: const Color.fromARGB(255, 201, 173, 167), width: 2),
+                ...getSortedGroups().map(
+                  (group) => ListTile(
+                    leading: Stack(
+                      children: [
+                        const Icon(Icons.group),
+                        // Red circle indicator for unread
+                        if (unreadCounts.containsKey(group) &&
+                            unreadCounts[group]! > 0)
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            child: Container(
+                              width: 18,
+                              height: 18,
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color.fromARGB(
+                                    255,
+                                    201,
+                                    173,
+                                    167,
+                                  ),
+                                  width: 2,
                                 ),
-                                child: Center(
-                                  child: Text(
-                                    unreadCounts[group]! > 99 ? '99+' : '${unreadCounts[group]}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  unreadCounts[group]! > 99
+                                      ? '99+'
+                                      : '${unreadCounts[group]}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),
                             ),
-                        ],
-                      ),
-                      title: Row(
-                        children: [
-                          Expanded(child: Text(group)),
-                          // Draft indicator
-                          if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(left:4),
-                              child: Icon(Icons.edit_note, size: 14, color: const Color.fromARGB(255, 103, 80, 164)),
-                            ),
-                        ],
-                      ),
-                      selected: selectedChat == group,
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Pin button
-                          IconButton(
-                            icon: Icon(
-                              pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
-                              size: 18,
-                            ),
-                            onPressed: () => togglePin(group),
                           ),
-                          // Add member button
-                          if (group != 'General')
-                            IconButton(
-                              icon: const Icon(Icons.add_circle, size: 18),
-                              onPressed: () => addToGroup(group),
+                      ],
+                    ),
+                    title: Row(
+                      children: [
+                        Expanded(child: Text(group)),
+                        // Draft indicator
+                        if (drafts.containsKey(group) &&
+                            drafts[group]!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.edit_note,
+                              size: 14,
+                              color: const Color.fromARGB(255, 103, 80, 164),
                             ),
-                        ],
-                      ),
-                      onTap: () => changeChat(group),
-                    )),
+                          ),
+                      ],
+                    ),
+                    selected: selectedChat == group,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Pin button
+                        IconButton(
+                          icon: Icon(
+                            pinnedChats.contains(group)
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                            size: 18,
+                          ),
+                          onPressed: () => togglePin(group),
+                        ),
+                        // Add member button
+                        if (group != 'General')
+                          IconButton(
+                            icon: const Icon(Icons.add_circle, size: 18),
+                            onPressed: () => addToGroup(group),
+                          ),
+                      ],
+                    ),
+                    onTap: () => changeChat(group),
+                  ),
+                ),
                 ListTile(
                   leading: const Icon(Icons.add),
                   title: const Text('Creează grup'),
@@ -609,7 +642,8 @@ class ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                             // Red circle indicator for unread
-                            if (unreadCounts.containsKey(user) && unreadCounts[user]! > 0)
+                            if (unreadCounts.containsKey(user) &&
+                                unreadCounts[user]! > 0)
                               Positioned(
                                 top: -2,
                                 right: -2,
@@ -619,11 +653,16 @@ class ChatScreenState extends State<ChatScreen> {
                                   decoration: BoxDecoration(
                                     color: Colors.red,
                                     shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white, width: 2),
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
                                   ),
                                   child: Center(
                                     child: Text(
-                                      unreadCounts[user]! > 99 ? '99+' : '${unreadCounts[user]}',
+                                      unreadCounts[user]! > 99
+                                          ? '99+'
+                                          : '${unreadCounts[user]}',
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 10,
@@ -639,16 +678,23 @@ class ChatScreenState extends State<ChatScreen> {
                           children: [
                             Expanded(child: Text(user)),
                             // Draft indicator
-                            if (drafts.containsKey(user) && drafts[user]!.isNotEmpty)
+                            if (drafts.containsKey(user) &&
+                                drafts[user]!.isNotEmpty)
                               Padding(
-                                padding: const EdgeInsets.only(left:4),
-                                child: Icon(Icons.edit_note, size: 14, color: Colors.yellow[700]),
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Icon(
+                                  Icons.edit_note,
+                                  size: 14,
+                                  color: Colors.yellow[700],
+                                ),
                               ),
                           ],
                         ),
                         trailing: IconButton(
                           icon: Icon(
-                            pinnedChats.contains(user) ? Icons.push_pin : Icons.push_pin_outlined,
+                            pinnedChats.contains(user)
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
                             size: 18,
                           ),
                           onPressed: () => togglePin(user),
@@ -683,7 +729,9 @@ class ChatScreenState extends State<ChatScreen> {
                         child: Row(
                           children: [
                             Text(
-                              selectedChat == 'General' ? 'Chat General' : selectedChat,
+                              selectedChat == 'General'
+                                  ? 'Chat General'
+                                  : selectedChat,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -691,7 +739,8 @@ class ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                             // Typing indicator in header
-                            if (typingUsers.containsKey(selectedChat) && typingUsers[selectedChat]!)
+                            if (typingUsers.containsKey(selectedChat) &&
+                                typingUsers[selectedChat]!)
                               Padding(
                                 padding: const EdgeInsets.only(left: 10),
                                 child: TypingIndicator(),
@@ -723,7 +772,9 @@ class ChatScreenState extends State<ChatScreen> {
                             return const SizedBox.shrink();
                           }
                           // Arată mesajul dacă sunt în conversația cu sender sau target
-                          final otherUser = msg.username == widget.username ? msg.target : msg.username;
+                          final otherUser = msg.username == widget.username
+                              ? msg.target
+                              : msg.username;
                           // Verifică dacă otherUser nu este null
                           if (otherUser == null || otherUser != selectedChat) {
                             return const SizedBox.shrink();
@@ -769,7 +820,12 @@ class ChatScreenState extends State<ChatScreen> {
                         onPressed: sendMessage,
                         icon: const Icon(Icons.send),
                         style: IconButton.styleFrom(
-                          backgroundColor: const Color.fromARGB(255, 201, 173, 167),
+                          backgroundColor: const Color.fromARGB(
+                            255,
+                            201,
+                            173,
+                            167,
+                          ),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.all(12),
                         ),
@@ -812,8 +868,10 @@ class ChatScreenState extends State<ChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              msg.isPrivate 
-                  ? (isMe ? 'Către: ${msg.target ?? "Necunoscut"}' : 'De la: ${msg.username}')
+              msg.isPrivate
+                  ? (isMe
+                        ? 'Către: ${msg.target ?? "Necunoscut"}'
+                        : 'De la: ${msg.username}')
                   : msg.username,
               style: TextStyle(
                 fontWeight: FontWeight.bold,
@@ -821,14 +879,12 @@ class ChatScreenState extends State<ChatScreen> {
                 color: isMe ? Colors.white : Colors.grey[700],
               ),
             ),
-            const SizedBox(height:4),
+            const SizedBox(height: 4),
             Text(
               msg.message,
-              style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
-              ),
+              style: TextStyle(color: isMe ? Colors.white : Colors.black87),
             ),
-            const SizedBox(height:4),
+            const SizedBox(height: 4),
             Text(
               formatTime(msg.timestamp),
               style: TextStyle(
@@ -851,22 +907,26 @@ class ChatScreenState extends State<ChatScreen> {
       setState(() {
         isConnected = false;
       });
-      
+
       // Încearcă să se reconecteze automat la fiecare 3 secunde
       reconnectTimer?.cancel();
-      reconnectTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      reconnectTimer = Timer.periodic(const Duration(seconds: 3), (
+        timer,
+      ) async {
         if (isConnected) {
           timer.cancel();
           return;
         }
-        
+
         reconnectAttempts++;
         print('Încercare reconectare #$reconnectAttempts');
-        
+
         try {
-          final testChannel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080'));
+          final testChannel = WebSocketChannel.connect(
+            Uri.parse('wss://$host:$port'),
+          );
           final completer = Completer<bool>();
-          
+
           // Timeout de 2 secunde
           Timer? timeoutTimer = Timer(const Duration(seconds: 2), () {
             testChannel.sink.close();
@@ -874,7 +934,7 @@ class ChatScreenState extends State<ChatScreen> {
               completer.complete(false);
             }
           });
-          
+
           testChannel.stream.listen(
             (message) {
               timeoutTimer.cancel();
@@ -891,9 +951,9 @@ class ChatScreenState extends State<ChatScreen> {
               }
             },
           );
-          
+
           final connected = await completer.future;
-          
+
           if (connected && mounted) {
             timer.cancel();
             reconnectTimer = null;
@@ -904,7 +964,7 @@ class ChatScreenState extends State<ChatScreen> {
           print('Eroare reconectare: $e');
         }
       });
-      
+
       // Afișează dialog cu opțiunea de a reveni la login sau de a aștepta reconectarea
       showDialog(
         context: context,
@@ -1002,10 +1062,7 @@ class TypingIndicatorState extends State<TypingIndicator>
       children: [
         const Text(
           'scrie',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-          ),
+          style: TextStyle(color: Colors.white, fontSize: 14),
         ),
         const SizedBox(width: 4),
         Row(
@@ -1018,10 +1075,7 @@ class TypingIndicatorState extends State<TypingIndicator>
                 padding: const EdgeInsets.symmetric(horizontal: 1),
                 child: Text(
                   '.',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ),
             );
