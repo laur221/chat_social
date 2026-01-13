@@ -125,24 +125,25 @@ async def health(request):
 # Main server
 # ===============================
 async def main():
-    port = int(os.environ.get("PORT", 8080))  # Render folosește PORT
+    ws_port = int(os.environ.get("PORT", 8080))  # Render folosește PORT pentru WebSocket
+    http_port = ws_port + 1  # HTTP pe portul următor
     host = "0.0.0.0"
 
     print("="*50)
     print(f"Server WebSocket + HTTP pentru Chat Social")
-    print(f"Ascultă pe ws://{host}:{port}")
-    print(f"Health check HTTP la http://{host}:{port}/")
+    print(f"WebSocket pe ws://{host}:{ws_port}")
+    print(f"Health check HTTP la http://{host}:{http_port}/")
     print("="*50)
 
-    # Pornim server WebSocket
-    ws_server = websockets.serve(handle_client, host, port, process_request=process_request)
+    # Pornim server WebSocket pe ws_port
+    ws_server = websockets.serve(handle_client, host, ws_port, process_request=process_request)
 
-    # Pornim server HTTP cu aiohttp (health check)
+    # Pornim server HTTP cu aiohttp pe http_port
     http_app = web.Application()
     http_app.router.add_get("/", health)
     runner = web.AppRunner(http_app)
     await runner.setup()
-    site = web.TCPSite(runner, host, port)
+    site = web.TCPSite(runner, host, http_port)
 
     # Rulează ambele servere concurent
     await asyncio.gather(ws_server, site.start())
