@@ -90,38 +90,29 @@ class _LoginScreenState extends State<LoginScreen> {
                         final username = usernameController.text.trim();
                         final password = passwordController.text.trim();
 
+                        if (username.isEmpty || password.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Vă rugăm să introduceți username și parola'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                          setState(() {
+                            _isLoading = false;
+                          });
+                          return;
+                        }
+
                         try {
                           print(
                             '[DEBUG] Încep procesul de autentificare pentru utilizatorul: $username',
                           );
 
-                          // Verifică dacă serverul este online înainte de autentificare
-                          final serverOnline = await checkServerOnline();
-                          if (!serverOnline) {
-                            print('[DEBUG] Serverul nu este online.');
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Serverul nu este online!'),
-                                  backgroundColor: Colors.red,
-                                  duration: Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                            setState(() {
-                              _isLoading = false;
-                            });
-                            return;
-                          }
-
-                          print(
-                            '[DEBUG] Serverul este online. Continuăm cu autentificarea...',
-                          );
-
-                          // Trimite datele de autentificare la server
+                          // Trimite datele de autentificare direct la server
                           final channel = WebSocketChannel.connect(
                             Uri.parse(host),
                           );
+                          
                           channel.sink.add(
                             jsonEncode({
                               "type": "auth",
@@ -131,30 +122,46 @@ class _LoginScreenState extends State<LoginScreen> {
                           );
 
                           channel.stream.listen((message) {
+                            print('[DEBUG] Received message: $message');
                             final data = jsonDecode(message);
+                            print('[DEBUG] Message type: ${data['type']}');
+                            
                             if (data['type'] == 'auth_success') {
                               print(
                                 '[DEBUG] Autentificare reușită pentru utilizatorul: $username',
                               );
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      ChatScreen(username: username),
-                                ),
-                              );
+                              if (mounted) {
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        ChatScreen(username: username, channel: channel),
+                                  ),
+                                );
+                              }
                             } else if (data['type'] == 'auth_error') {
                               print(
                                 '[DEBUG] Autentificare eșuată: ${data['message']}',
                               );
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(data['message']),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
+                              channel.sink.close();
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(data['message']),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            } else if (data['type'] == 'welcome') {
+                              print('[DEBUG] Server welcome message');
                             }
+                          }, onError: (error) {
+                            print('[DEBUG] WebSocket error: $error');
+                            channel.sink.close();
+                          }, onDone: () {
+                            print('[DEBUG] WebSocket done');
                           });
+                          
                         } catch (e) {
                           print(
                             '[DEBUG] Excepție în procesul de autentificare: $e',
@@ -168,12 +175,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             );
                           }
                         } finally {
-                          setState(() {
-                            _isLoading = false;
-                          });
-                          print(
-                            '[DEBUG] Procesul de autentificare s-a încheiat.',
-                          );
+                          if (_isLoading) {
+                            setState(() {
+                              _isLoading = false;
+                            });
+                          }
                         }
                       },
                       style: ElevatedButton.styleFrom(

@@ -16,7 +16,7 @@ class MainApp extends StatelessWidget {
       home: Scaffold(
         body: Platform.isWindows
             ? const ChatApp()
-            : const ChatApp(),
+            : const ChatAppMobile(),
       ),
     );
   }
