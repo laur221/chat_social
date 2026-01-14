@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'chat.dart';
@@ -161,6 +160,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     );
                                   }
+                                  setState(() {
+                                    _isLoading = false;
+                                  });
                                 } else if (data['type'] == 'welcome') {
                                   print('[DEBUG] Welcome received');
                                 }
@@ -180,13 +182,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 );
                               }
-                            } finally {
-                              if (_isLoading && mounted) {
-                                setState(() {
-                                  _isLoading = false;
-                                });
-                              }
+                              setState(() {
+                                _isLoading = false;
+                              });
                             }
+                            // Note: Don't reset _isLoading on success - it will be reset when navigating
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color.fromARGB(255, 201, 173, 167),

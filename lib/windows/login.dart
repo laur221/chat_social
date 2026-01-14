@@ -152,6 +152,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 );
                               }
+                              setState(() {
+                                _isLoading = false;
+                              });
                             } else if (data['type'] == 'welcome') {
                               print('[DEBUG] Server welcome message');
                             }
@@ -174,13 +177,12 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             );
                           }
-                        } finally {
-                          if (_isLoading) {
-                            setState(() {
-                              _isLoading = false;
-                            });
-                          }
+                          // Reset loading state only on error
+                          setState(() {
+                            _isLoading = false;
+                          });
                         }
+                        // Note: Don't reset _isLoading on success - it will be reset when navigating
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color.fromARGB(
