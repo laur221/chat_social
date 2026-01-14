@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:window_size/window_size.dart';
+import 'login.dart';
 
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -230,6 +231,7 @@ class ChatScreenState extends State<ChatScreen> {
   int reconnectAttempts = 0;
   Timer? reconnectTimer;
   bool isConnected = false;
+  bool manualLogout = false;
 
   @override
   void initState() {
@@ -449,6 +451,8 @@ class ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    // save current draft before disposing
+    saveCurrentDraft();
     channel.sink.close();
     messageController.dispose();
     typingTimer?.cancel();
@@ -460,6 +464,7 @@ class ChatScreenState extends State<ChatScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth > 800;
+
         return Scaffold(
           backgroundColor: const Color.fromARGB(255, 242, 233, 228),
           appBar: AppBar(
@@ -479,11 +484,10 @@ class ChatScreenState extends State<ChatScreen> {
                   padding: const EdgeInsets.only(right: 10),
                   child: TypingIndicator(),
                 ),
+              
               IconButton(
                 icon: const Icon(Icons.logout),
-                onPressed: () {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                },
+                onPressed: logout,
               ),
             ],
           ),
@@ -628,6 +632,13 @@ class ChatScreenState extends State<ChatScreen> {
                   ? Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                          )
+                        else
+                          const SizedBox(width: 18),
                         IconButton(
                           icon: Icon(
                             pinnedChats.contains(group)
@@ -643,14 +654,26 @@ class ChatScreenState extends State<ChatScreen> {
                         ),
                       ],
                     )
-                  : IconButton(
-                      icon: Icon(
-                        pinnedChats.contains(group)
-                            ? Icons.push_pin
-                            : Icons.push_pin_outlined,
-                        color: Color.fromARGB(255, 103, 80, 164),
-                      ),
-                      onPressed: () => togglePin(group),
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                          )
+                        else
+                          const SizedBox(width: 18),
+                        IconButton(
+                          icon: Icon(
+                            pinnedChats.contains(group)
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                            color: Color.fromARGB(255, 103, 80, 164),
+                          ),
+                          onPressed: () => togglePin(group),
+                        ),
+                      ],
                     ),
             ),
           ),
@@ -694,14 +717,26 @@ class ChatScreenState extends State<ChatScreen> {
               selected: selectedChat == user,
               selectedTileColor: Colors.white.withOpacity(0.24),
               onTap: () => changeChat(user),
-              trailing: IconButton(
-                icon: Icon(
-                  pinnedChats.contains(user)
-                      ? Icons.push_pin
-                      : Icons.push_pin_outlined,
-                  color: Color.fromARGB(255, 103, 80, 164),
-                ),
-                onPressed: () => togglePin(user),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (drafts.containsKey(user) && drafts[user]!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                    )
+                  else
+                    const SizedBox(width: 18),
+                  IconButton(
+                    icon: Icon(
+                      pinnedChats.contains(user)
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
+                      color: Color.fromARGB(255, 103, 80, 164),
+                    ),
+                    onPressed: () => togglePin(user),
+                  ),
+                ],
               ),
             ),
           ),
@@ -772,6 +807,7 @@ class ChatScreenState extends State<ChatScreen> {
   }
 
   void handleDisconnect() {
+    if (manualLogout) return;
     if (mounted) {
       showDialog(
         context: context,
@@ -791,6 +827,39 @@ class ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
+  }
+
+  void logout() {
+    manualLogout = true;
+    try {
+      // Inform server about logout if possible
+      channel.sink.add(jsonEncode({'type': 'logout', 'username': widget.username}));
+    } catch (e) {
+      // ignore send errors
+    }
+
+    try {
+      channel.sink.close();
+    } catch (e) {
+      // ignore close errors
+    }
+
+    if (!mounted) return;
+
+    // Reset window size/position to login defaults before returning
+    try {
+      setWindowMinSize(const Size(600, 600));
+      setWindowMaxSize(const Size(600, 600));
+      setWindowFrame(const Rect.fromLTWH(100, 100, 600, 600));
+    } catch (e) {
+      // ignore window sizing errors on unsupported platforms
+    }
+
+    // Return to login screen and remove current navigation stack
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (route) => false,
+    );
   }
 }
 
