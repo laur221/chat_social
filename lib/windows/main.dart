@@ -5,8 +5,7 @@ import 'login.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   setWindowTitle('Chat Social PC');
-  setWindowMinSize(const Size(500, 350)); // Dimensiune mica pentru login
-  setWindowMaxSize(const Size(500, 350));
+      // setWindowMinSize(const Size(300, 200));
   runApp(const ChatApp());
 }
 

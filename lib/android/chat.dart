@@ -491,7 +491,6 @@ class ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
-              const Divider(),
               const Padding(
                 padding: EdgeInsets.all(8.0),
                 child: Text(

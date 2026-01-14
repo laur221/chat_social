@@ -1,7 +1,8 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:window_size/window_size.dart';
 import 'chat.dart';
 import 'dart:convert';
 
@@ -17,7 +18,7 @@ const host = 'wss://chat-social-ng2d.onrender.com/ws';
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
   late final TextEditingController passwordController;
-  bool _isLoading = false; // Adăugat pentru a gestiona starea de încărcare
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -35,178 +36,171 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Schimbă dimensiunea ferestrei la 800x800 (fără poziție fixă)
+    Future.delayed(const Duration(milliseconds: 100), () {
+      setWindowMinSize(const Size(600, 600));
+      setWindowMaxSize(const Size(600, 600));
+    });
+
     return Scaffold(
       backgroundColor: const Color.fromARGB(255, 242, 233, 228),
-      body: Center(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              const Text(
-                'Bine ați venit în Chat Social',
-                style: TextStyle(
-                  fontFamily: 'Arial',
-                  fontSize: 24,
-                  color: Colors.black,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.chat_bubble,
+                  size: 80,
+                  color: Color.fromARGB(255, 201, 173, 167),
                 ),
-              ),
-              const SizedBox(height: 30),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: TextField(
-                  controller: usernameController,
-                  decoration: InputDecoration(
-                    labelText: 'Nume de utilizator',
-                    fillColor: const Color.fromARGB(255, 201, 173, 167),
-                    filled: true,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
+                const SizedBox(height: 20),
+                const Text(
+                  'Chat Social',
+                  style: TextStyle(
+                    fontFamily: 'Arial',
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Bine ați venit',
+                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+                const SizedBox(height: 40),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 100),
+                  child: TextField(
+                    controller: usernameController,
+                    decoration: InputDecoration(
+                      labelText: 'Nume de utilizator',
+                      fillColor: const Color.fromARGB(255, 201, 173, 167),
+                      filled: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: BorderSide.none,
+                      ),
+                      prefixIcon: const Icon(Icons.person),
+                    ),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Color.fromARGB(255, 26, 27, 37),
                     ),
                   ),
-                  style: const TextStyle(
-                    fontSize: 18,
-                    color: Color.fromARGB(255, 26, 27, 37),
-                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: SizedBox(
-                  height: 50,
+                const SizedBox(height: 15),
+                SizedBox(
+                  height: 60,
                   child: PasswordField(controller: passwordController),
                 ),
-              ),
-              const SizedBox(height: 20),
-              _isLoading
-                  ? const CircularProgressIndicator() // Indicator de încărcare
-                  : ElevatedButton(
-                      onPressed: () async {
-                        setState(() {
-                          _isLoading = true;
-                        });
+                const SizedBox(height: 30),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 100),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : ElevatedButton(
+                            onPressed: () async {
+                              setState(() {
+                                _isLoading = true;
+                              });
 
-                        final username = usernameController.text.trim();
-                        final password = passwordController.text.trim();
+                              final username = usernameController.text.trim();
+                              final password = passwordController.text.trim();
 
-                        if (username.isEmpty || password.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Vă rugăm să introduceți username și parola'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                          setState(() {
-                            _isLoading = false;
-                          });
-                          return;
-                        }
-
-                        try {
-                          print(
-                            '[DEBUG] Încep procesul de autentificare pentru utilizatorul: $username',
-                          );
-
-                          // Trimite datele de autentificare direct la server
-                          final channel = WebSocketChannel.connect(
-                            Uri.parse(host),
-                          );
-                          
-                          channel.sink.add(
-                            jsonEncode({
-                              "type": "auth",
-                              "username": username,
-                              "password": password,
-                            }),
-                          );
-
-                          channel.stream.listen((message) {
-                            print('[DEBUG] Received message: $message');
-                            final data = jsonDecode(message);
-                            print('[DEBUG] Message type: ${data['type']}');
-                            
-                            if (data['type'] == 'auth_success') {
-                              print(
-                                '[DEBUG] Autentificare reușită pentru utilizatorul: $username',
-                              );
-                              if (mounted) {
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        ChatScreen(username: username, channel: channel),
-                                  ),
-                                );
-                              }
-                            } else if (data['type'] == 'auth_error') {
-                              print(
-                                '[DEBUG] Autentificare eșuată: ${data['message']}',
-                              );
-                              channel.sink.close();
-                              if (mounted) {
+                              if (username.isEmpty || password.isEmpty) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(data['message']),
+                                  const SnackBar(
+                                    content: Text(
+                                      'Vă rugăm să introduceți username și parola',
+                                    ),
                                     backgroundColor: Colors.red,
                                   ),
                                 );
+                                setState(() {
+                                  _isLoading = false;
+                                });
+                                return;
                               }
-                              setState(() {
-                                _isLoading = false;
-                              });
-                            } else if (data['type'] == 'welcome') {
-                              print('[DEBUG] Server welcome message');
-                            }
-                          }, onError: (error) {
-                            print('[DEBUG] WebSocket error: $error');
-                            channel.sink.close();
-                          }, onDone: () {
-                            print('[DEBUG] WebSocket done');
-                          });
-                          
-                        } catch (e) {
-                          print(
-                            '[DEBUG] Excepție în procesul de autentificare: $e',
-                          );
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('A apărut o eroare: $e'),
-                                backgroundColor: Colors.red,
+
+                              try {
+                                print('[DEBUG] Login attempt for: $username');
+
+                                final channel = WebSocketChannel.connect(
+                                  Uri.parse(host),
+                                );
+
+                                channel.sink.add(
+                                  jsonEncode({
+                                    "type": "auth",
+                                    "username": username,
+                                    "password": password,
+                                  }),
+                                );
+
+                                // Așteptăm 1 secundă pentru autentificare
+                                await Future.delayed(const Duration(seconds: 1));
+
+                                if (mounted) {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ChatScreen(
+                                        username: username,
+                                        channel: channel,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                print('[DEBUG] Exception: $e');
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Eroare: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                                setState(() {
+                                  _isLoading = false;
+                                });
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color.fromARGB(
+                                255,
+                                201,
+                                173,
+                                167,
                               ),
-                            );
-                          }
-                          // Reset loading state only on error
-                          setState(() {
-                            _isLoading = false;
-                          });
-                        }
-                        // Note: Don't reset _isLoading on success - it will be reset when navigating
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color.fromARGB(
-                          255,
-                          201,
-                          173,
-                          167,
-                        ),
-                        foregroundColor: const Color.fromARGB(255, 26, 27, 37),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 40,
-                          vertical: 15,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                      ),
-                      child: const Text(
-                        'Autentificare',
-                        style: TextStyle(fontSize: 18),
-                      ),
-                    ),
-              const SizedBox(height: 50),
-            ],
+                              foregroundColor: const Color.fromARGB(
+                                255,
+                                26,
+                                27,
+                                37,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: const Text(
+                              'Autentificare',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                  ),
+                )
+              ],
+            ),
           ),
         ),
       ),
@@ -228,95 +222,30 @@ class _PasswordFieldState extends State<PasswordField> {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: widget.controller,
-      obscureText: _isObscured,
-      decoration: InputDecoration(
-        hintText: 'Parolă',
-        filled: true,
-        fillColor: const Color.fromARGB(255, 201, 173, 167),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(30),
-          borderSide: BorderSide.none,
-        ),
-        suffixIcon: IconButton(
-          icon: Icon(_isObscured ? Icons.visibility : Icons.visibility_off),
-          onPressed: () {
-            setState(() {
-              _isObscured = !_isObscured;
-            });
-          },
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 100),
+      child: TextField(
+        controller: widget.controller,
+        obscureText: _isObscured,
+        decoration: InputDecoration(
+          hintText: 'Parolă',
+          filled: true,
+          fillColor: const Color.fromARGB(255, 201, 173, 167),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(30),
+            borderSide: BorderSide.none,
+          ),
+          prefixIcon: const Icon(Icons.lock),
+          suffixIcon: IconButton(
+            icon: Icon(_isObscured ? Icons.visibility : Icons.visibility_off),
+            onPressed: () {
+              setState(() {
+                _isObscured = !_isObscured;
+              });
+            },
+          ),
         ),
       ),
     );
   }
-}
-
-Future<bool> checkServerOnline() async {
-  try {
-    print('[DEBUG] Încep verificarea serverului...');
-
-    // Încearcă să se conecteze
-    final channel = WebSocketChannel.connect(Uri.parse(host));
-    print('[DEBUG] Încerc să mă conectez la: $host');
-    final completer = Completer<bool>();
-
-    // Timeout de 5 secunde pentru conexiune
-    Timer(const Duration(seconds: 5), () {
-      if (!completer.isCompleted) {
-        print('[DEBUG] Timeout atins. Serverul nu a răspuns.');
-        channel.sink.close();
-        completer.complete(false);
-      }
-    });
-
-    // Ascultă mesajele sau erorile
-    channel.stream.listen(
-      (message) {
-        print('[DEBUG] Conexiune reușită cu serverul.');
-        if (!completer.isCompleted) {
-          channel.sink.close();
-          completer.complete(true);
-        }
-      },
-      onError: (error) {
-        print('[DEBUG] Eroare la conectarea la server: $error');
-        if (!completer.isCompleted) {
-          channel.sink.close();
-          completer.complete(false);
-        }
-      },
-      onDone: () {
-        print('[DEBUG] Conexiunea cu serverul s-a încheiat.');
-      },
-    );
-
-    return completer.future;
-  } catch (e) {
-    print('[DEBUG] Eroare la verificarea serverului: $e');
-    return false;
-  }
-}
-
-Future<bool> authenticateUser(String username, String password) async {
-  try {
-    final file = File('lib/password.txt');
-    final lines = await file.readAsLines();
-
-    for (var line in lines) {
-      final parts = line.split(':');
-      if (parts.length == 2) {
-        final fileUsername = parts[0].trim();
-        final filePassword = parts[1].trim();
-
-        if (fileUsername == username && filePassword == password) {
-          return true;
-        }
-      }
-    }
-  } catch (e) {
-    return false;
-  }
-
-  return false;
 }
