@@ -14,7 +14,7 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        body: Platform.isWindows
+        body: Platform.isWindows || Platform.isLinux || Platform.isMacOS
             ? const ChatApp()
             : const ChatAppMobile(),
       ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'chat.dart';
@@ -125,53 +126,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
                               channel.sink.add(
                                 jsonEncode({
-                                  "type": "auth",
-                                  "username": username,
-                                  "password": password,
+                                    "type": "auth",
+                                    "username": username,
+                                    "password": password,
                                 }),
                               );
 
-                              channel.stream.listen((message) {
-                                print('[DEBUG] Received: $message');
-                                final data = jsonDecode(message);
-                                print('[DEBUG] Type: ${data['type']}');
-
-                                if (data['type'] == 'auth_success') {
-                                  print('[DEBUG] Login success for: $username');
-                                  if (mounted) {
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => ChatScreen(
-                                          username: username,
-                                          channel: channel,
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                } else if (data['type'] == 'auth_error') {
-                                  print('[DEBUG] Login failed');
-                                  channel.sink.close();
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(data['message']),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                  }
-                                  setState(() {
-                                    _isLoading = false;
-                                  });
-                                } else if (data['type'] == 'welcome') {
-                                  print('[DEBUG] Welcome received');
-                                }
-                              }, onError: (error) {
-                                print('[DEBUG] Error: $error');
-                                channel.sink.close();
-                              }, onDone: () {
-                                print('[DEBUG] Done');
-                              });
+                              // Așteptăm 1 secundă pentru autentificare
+                              await Future.delayed(const Duration(seconds: 1));
+                              
+                              if (mounted) {
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ChatScreen(
+                                      username: username,
+                                      channel: channel,
+                                    ),
+                                  ),
+                                );
+                              }
                             } catch (e) {
                               print('[DEBUG] Exception: $e');
                               if (mounted) {

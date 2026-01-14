@@ -321,7 +321,12 @@ class ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void addSentMessage(String message, bool isPrivate, String? group, [String? target]) {
+  void addSentMessage(
+    String message,
+    bool isPrivate,
+    String? group, [
+    String? target,
+  ]) {
     setState(() {
       messages.add(
         ChatMessage(
@@ -450,10 +455,14 @@ class ChatScreenState extends State<ChatScreen> {
             Expanded(
               child: Text(
                 selectedChat == 'General' ? 'Chat General' : selectedChat,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-            if (typingUsers.containsKey(selectedChat) && typingUsers[selectedChat]!)
+            if (typingUsers.containsKey(selectedChat) &&
+                typingUsers[selectedChat]!)
               Padding(
                 padding: const EdgeInsets.only(right: 10),
                 child: TypingIndicator(),
@@ -476,7 +485,7 @@ class ChatScreenState extends State<ChatScreen> {
                   style: const TextStyle(color: Colors.white, fontSize: 20),
                 ),
                 accountEmail: const Text(
-                  'Chat Social',
+                  '',
                   style: TextStyle(color: Colors.white),
                 ),
                 currentAccountPicture: CircleAvatar(
@@ -491,7 +500,6 @@ class ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
-              const Divider(),
               const Padding(
                 padding: EdgeInsets.all(8.0),
                 child: Text(
@@ -504,7 +512,8 @@ class ChatScreenState extends State<ChatScreen> {
                   leading: Stack(
                     children: [
                       const Icon(Icons.group, color: Colors.white),
-                      if (unreadCounts.containsKey(group) && unreadCounts[group]! > 0)
+                      if (unreadCounts.containsKey(group) &&
+                          unreadCounts[group]! > 0)
                         Positioned(
                           top: 0,
                           right: 0,
@@ -552,7 +561,10 @@ class ChatScreenState extends State<ChatScreen> {
                               onPressed: () => togglePin(group),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.add_circle, color: Colors.white),
+                              icon: const Icon(
+                                Icons.add_circle,
+                                color: Colors.white,
+                              ),
                               onPressed: () => addToGroup(group),
                             ),
                           ],
@@ -601,7 +613,8 @@ class ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       ),
-                      if (unreadCounts.containsKey(user) && unreadCounts[user]! > 0)
+                      if (unreadCounts.containsKey(user) &&
+                          unreadCounts[user]! > 0)
                         Positioned(
                           top: -2,
                           right: -2,
@@ -761,7 +774,7 @@ class ChatScreenState extends State<ChatScreen> {
                   ? (isMe
                         ? 'Către: ${msg.target ?? "Necunoscut"}'
                         : 'De la: ${msg.username}')
-                  : msg.username,
+                  : 'De la: ${msg.username}',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
@@ -853,7 +866,10 @@ class TypingIndicatorState extends State<TypingIndicator>
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Text('scrie', style: TextStyle(color: Colors.white, fontSize: 12)),
+        const Text(
+          'scrie',
+          style: TextStyle(color: Colors.white, fontSize: 12),
+        ),
         const SizedBox(width: 4),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -863,7 +879,10 @@ class TypingIndicatorState extends State<TypingIndicator>
               duration: const Duration(milliseconds: 200),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 1),
-                child: Text('.', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                child: Text(
+                  '.',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
               ),
             );
           }).toList(),
