@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:window_size/window_size.dart';
 
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -234,10 +233,13 @@ class ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+<<<<<<< HEAD
       Future.delayed(const Duration(milliseconds: 100), () {
         setWindowMinSize(const Size(700, 800));
         setWindowMaxSize(Size.infinite);
       });
+=======
+>>>>>>> 6b5af491ccd4c72e2ea27672551e2753fd416418
     if (widget.channel == null) {
       print('[DEBUG] No channel provided, connecting...');
       connectToServer();
@@ -402,10 +404,19 @@ class ChatScreenState extends State<ChatScreen> {
       unreadCounts.remove(newChat);
     });
     loadDraft(newChat);
+<<<<<<< HEAD
     // Închide doar drawer-ul dacă este deschis (pe ecran îngust)
     if (Scaffold.of(context).isDrawerOpen) {
       Navigator.pop(context);
     }
+=======
+    Navigator.pop(context);
+    
+    // Force rebuild drawer when chat changes
+    Future.delayed(const Duration(milliseconds: 100), () {
+      setState(() {});
+    });
+>>>>>>> 6b5af491ccd4c72e2ea27672551e2753fd416418
   }
 
   void togglePin(String chatId) {
@@ -446,6 +457,199 @@ class ChatScreenState extends State<ChatScreen> {
     drafts[selectedChat] = text;
   }
 
+<<<<<<< HEAD
+=======
+  List<String> getSortedUsers() {
+    final sorted = List<String>.from(users);
+    sorted.sort((a, b) {
+      final aPinned = pinnedChats.contains(a);
+      final bPinned = pinnedChats.contains(b);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+
+      final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
+      final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
+      if (aUnread && !bUnread) return -1;
+      if (!aUnread && bUnread) return 1;
+
+      return a.compareTo(b);
+    });
+    return sorted;
+  }
+
+  List<String> getSortedGroups() {
+    final sorted = myGroups.toList();
+    sorted.sort((a, b) {
+      if (a == 'General') return -1;
+      if (b == 'General') return 1;
+
+      final aPinned = pinnedChats.contains(a);
+      final bPinned = pinnedChats.contains(b);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+
+      final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
+      final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
+      if (aUnread && !bUnread) return -1;
+      if (!aUnread && bUnread) return 1;
+
+      return a.compareTo(b);
+    });
+    return sorted;
+  }
+
+  void sendMessage() {
+    final message = messageController.text.trim();
+    if (message.isEmpty) return;
+
+    try {
+      if (selectedChat == 'General') {
+        channel.sink.add(
+          jsonEncode({
+            'type': 'message',
+            'username': widget.username,
+            'message': message,
+          }),
+        );
+        drafts.remove('General');
+        messageController.clear();
+      } else if (users.contains(selectedChat)) {
+        channel.sink.add(
+          jsonEncode({
+            'type': 'private_message',
+            'username': widget.username,
+            'target': selectedChat,
+            'message': message,
+          }),
+        );
+        addSentMessage(message, true, null, selectedChat);
+        drafts.remove(selectedChat);
+        messageController.clear();
+      } else if (myGroups.contains(selectedChat)) {
+        channel.sink.add(
+          jsonEncode({
+            'type': 'group_message',
+            'username': widget.username,
+            'group': selectedChat,
+            'message': message,
+          }),
+        );
+        addSentMessage(message, false, selectedChat);
+        drafts.remove(selectedChat);
+        messageController.clear();
+      }
+
+      sendTypingIndicator(false);
+    } catch (e) {
+      print('Eroare la trimiterea mesajului: $e');
+    }
+  }
+
+  void addSentMessage(String message, bool isPrivate, String? group, [String? target]) {
+    setState(() {
+      messages.add(
+        ChatMessage(
+          username: widget.username,
+          message: message,
+          timestamp: DateTime.now(),
+          isPrivate: isPrivate,
+          group: group,
+          target: target,
+        ),
+      );
+    });
+  }
+
+  void createGroup() {
+    TextEditingController groupController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Creează un grup'),
+        content: TextField(
+          controller: groupController,
+          decoration: const InputDecoration(labelText: 'Nume grup'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Anulează'),
+          ),
+          TextButton(
+            onPressed: () {
+              final groupName = groupController.text.trim();
+              if (groupName.isNotEmpty && mounted) {
+                channel.sink.add(
+                  jsonEncode({
+                    'type': 'create_group',
+                    'group_name': groupName,
+                    'username': widget.username,
+                  }),
+                );
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Creează'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void addToGroup(String groupName) {
+    if (users.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nu sunt utilizatori disponibili')),
+      );
+      return;
+    }
+
+  String selectedUser = users.first;
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Adaugă în $groupName'),
+          content: DropdownButton<String>(
+            value: selectedUser,
+            items: users.map((user) {
+              return DropdownMenuItem<String>(value: user, child: Text(user));
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  selectedUser = value;
+                });
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Anulează'),
+            ),
+            TextButton(
+              onPressed: () {
+                channel.sink.add(
+                  jsonEncode({
+                    'type': 'add_to_group',
+                    'group_name': groupName,
+                    'member': selectedUser,
+                  }),
+                );
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Utilizator adăugat')),
+                );
+              },
+              child: const Text('Adaugă'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+>>>>>>> 6b5af491ccd4c72e2ea27672551e2753fd416418
 
   @override
   void dispose() {
@@ -457,6 +661,7 @@ class ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+<<<<<<< HEAD
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth > 800;
@@ -703,6 +908,295 @@ class ChatScreenState extends State<ChatScreen> {
                 ),
                 onPressed: () => togglePin(user),
               ),
+=======
+    return Scaffold(
+      backgroundColor: const Color.fromARGB(255, 242, 233, 228),
+      appBar: AppBar(
+        backgroundColor: const Color.fromARGB(255, 201, 173, 167),
+        title: Row(
+          children: [
+            Icon(
+              users.contains(selectedChat) ? Icons.person : Icons.group,
+              color: Colors.white,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                selectedChat == 'General' ? 'Chat General' : selectedChat,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            ),
+            if (typingUsers.containsKey(selectedChat) && typingUsers[selectedChat]!)
+              Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: TypingIndicator(),
+              ),
+          ],
+        ),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      drawer: Drawer(
+        child: Container(
+          color: const Color.fromARGB(255, 201, 173, 167),
+          child: ListView(
+            children: [
+              UserAccountsDrawerHeader(
+                decoration: const BoxDecoration(
+                  color: Color.fromARGB(255, 176, 148, 142),
+                ),
+                accountName: Text(
+                  widget.username,
+                  style: const TextStyle(color: Colors.white, fontSize: 20),
+                ),
+                accountEmail: const Text(
+                  'Chat Social',
+                  style: TextStyle(color: Colors.white),
+                ),
+                currentAccountPicture: CircleAvatar(
+                  backgroundColor: Colors.white,
+                  child: Text(
+                    widget.username[0].toUpperCase(),
+                    style: const TextStyle(
+                      color: Color.fromARGB(255, 201, 173, 167),
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text(
+                  'GRUPURILE MELE',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              ...getSortedGroups().map(
+                (group) => ListTile(
+                  leading: Stack(
+                    children: [
+                      const Icon(Icons.group, color: Colors.white),
+                      if (unreadCounts.containsKey(group) && unreadCounts[group]! > 0)
+                        Positioned(
+                          top: 0,
+                          right: 0,
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                unreadCounts[group]! > 99
+                                    ? '99+'
+                                    : '${unreadCounts[group]}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  title: Text(
+                    group,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  selected: selectedChat == group,
+                  selectedTileColor: Colors.white.withOpacity(0.24),
+                  onTap: () => changeChat(group),
+                  trailing: group != 'General'
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(
+                                pinnedChats.contains(group)
+                                    ? Icons.push_pin
+                                    : Icons.push_pin_outlined,
+                                color: Colors.white,
+                              ),
+                              onPressed: () => togglePin(group),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add_circle, color: Colors.white),
+                              onPressed: () => addToGroup(group),
+                            ),
+                          ],
+                        )
+                      : IconButton(
+                          icon: Icon(
+                            pinnedChats.contains(group)
+                                ? Icons.push_pin
+                                    : Icons.push_pin_outlined,
+                                color: Colors.white,
+                          ),
+                          onPressed: () => togglePin(group),
+                        ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.add, color: Colors.white),
+                title: const Text(
+                  'Creează grup',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  createGroup();
+                },
+              ),
+              const Divider(),
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text(
+                  'UTILIZATORI CONECTAȚI',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              ...getSortedUsers().map(
+                (user) => ListTile(
+                  leading: Stack(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: Colors.white,
+                        child: Text(
+                          user[0].toUpperCase(),
+                          style: const TextStyle(
+                            color: Color.fromARGB(255, 201, 173, 167),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (unreadCounts.containsKey(user) && unreadCounts[user]! > 0)
+                        Positioned(
+                          top: -2,
+                          right: -2,
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                unreadCounts[user]! > 99
+                                    ? '99+'
+                                    : '${unreadCounts[user]}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  title: Text(
+                    user,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  selected: selectedChat == user,
+                  selectedTileColor: Colors.white.withOpacity(0.24),
+                  onTap: () => changeChat(user),
+                  trailing: IconButton(
+                    icon: Icon(
+                      pinnedChats.contains(user)
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
+                      color: Colors.white,
+                    ),
+                    onPressed: () => togglePin(user),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: Container(
+              color: Colors.white,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  final msg = messages[index];
+                  final isMe = msg.username == widget.username;
+
+                  if (selectedChat == 'General') {
+                    if (msg.isPrivate || msg.group != 'General') {
+                      return SizedBox.shrink();
+                    }
+                  } else if (users.contains(selectedChat)) {
+                    if (!msg.isPrivate) {
+                      return SizedBox.shrink();
+                    }
+                    final otherUser = msg.username == widget.username
+                        ? msg.target
+                        : msg.username;
+                    if (otherUser == null || otherUser != selectedChat) {
+                      return SizedBox.shrink();
+                    }
+                  } else if (myGroups.contains(selectedChat)) {
+                    if (msg.group != selectedChat || msg.isPrivate) {
+                      return SizedBox.shrink();
+                    }
+                  }
+
+                  return buildMessageBubble(msg, isMe);
+                },
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: const Color.fromARGB(255, 242, 233, 228),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: messageController,
+                    onChanged: onTextChanged,
+                    decoration: InputDecoration(
+                      hintText: getHintText(),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(25),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 15,
+                      ),
+                    ),
+                    onSubmitted: (_) => sendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                IconButton(
+                  onPressed: sendMessage,
+                  icon: const Icon(Icons.send),
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color.fromARGB(255, 201, 173, 167),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ],
+>>>>>>> 6b5af491ccd4c72e2ea27672551e2753fd416418
             ),
           ),
         ],

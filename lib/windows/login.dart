@@ -145,12 +145,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                 // Așteptăm 1 secundă pentru autentificare
                                 await Future.delayed(const Duration(seconds: 1));
 
+<<<<<<< HEAD
                                 // Setează dimensiunea și poziția ferestrei după logare
                                 await Future.delayed(const Duration(milliseconds: 100));
                                 setWindowMinSize(const Size(700, 800));
                                 setWindowMaxSize(Size.infinite);
                                 setWindowFrame(const Rect.fromLTWH(100, 100, 900, 800));
 
+=======
+>>>>>>> 6b5af491ccd4c72e2ea27672551e2753fd416418
                                 if (mounted) {
                                   Navigator.pushReplacement(
                                     context,
