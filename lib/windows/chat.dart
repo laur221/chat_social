@@ -62,26 +62,27 @@ class ChatScreenState extends State<ChatScreen> {
       final message = messageController.text.trim();
       if (message.isEmpty) return;
 
-      try {
+        debugPrint('sendMessage() -> to: $selectedChat message: ${message.replaceAll(RegExp(r"\n"), '\\n')}');
+
+        try {
         if (selectedChat == 'General') {
-          channel.sink.add(
-            jsonEncode({
-              'type': 'message',
-              'username': widget.username,
-              'message': message,
-            }),
-          );
+          try {
+            channel.sink.add(jsonEncode({'type': 'message', 'username': widget.username, 'message': message}));
+            debugPrint('Public message sent to server');
+          } catch (e) {
+            debugPrint('Eroare la trimiterea mesajului public: $e');
+          }
+          // Optimistically show public message locally so user sees it immediately
+          addSentMessage(message, false, group: 'General');
           drafts.remove('General');
           messageController.clear();
         } else if (users.contains(selectedChat)) {
-          channel.sink.add(
-            jsonEncode({
-              'type': 'private_message',
-              'username': widget.username,
-              'target': selectedChat,
-              'message': message,
-            }),
-          );
+          try {
+            channel.sink.add(jsonEncode({'type': 'private_message', 'username': widget.username, 'target': selectedChat, 'message': message}));
+            debugPrint('Private message sent to $selectedChat');
+          } catch (e) {
+            debugPrint('Eroare la trimiterea mesajului privat către $selectedChat: $e');
+          }
           addSentMessage(message, true, target: selectedChat);
           drafts.remove(selectedChat);
           messageController.clear();
@@ -101,14 +102,12 @@ class ChatScreenState extends State<ChatScreen> {
             return;
           }
           // proceed to send group message
-          channel.sink.add(
-            jsonEncode({
-              'type': 'group_message',
-              'username': widget.username,
-              'group': selectedChat,
-              'message': message,
-            }),
-          );
+          try {
+            channel.sink.add(jsonEncode({'type': 'group_message', 'username': widget.username, 'group': selectedChat, 'message': message}));
+            debugPrint('Group message sent to $selectedChat');
+          } catch (e) {
+            debugPrint('Eroare la trimiterea mesajului în grupul $selectedChat: $e');
+          }
           addSentMessage(message, false, group: selectedChat);
           drafts.remove(selectedChat);
           messageController.clear();
@@ -300,20 +299,22 @@ class ChatScreenState extends State<ChatScreen> {
                         ),
                       ),
                       ElevatedButton(
-                        onPressed: addSelection.isEmpty
-                            ? null
-                            : () {
-                                for (final u in addSelection) {
-                                  try {
-                                    channel.sink.add(jsonEncode({'type': 'add_to_group', 'group_name': groupName, 'member': u}));
-                                  } catch (e) {}
-                                  // optimistic local update
-                                  groupMembers.putIfAbsent(groupName, () => <String>{});
-                                  groupMembers[groupName]!.add(u);
+                      onPressed: addSelection.isEmpty
+                          ? null
+                          : () {
+                              for (final u in addSelection) {
+                                try {
+                                  channel.sink.add(jsonEncode({'type': 'add_to_group', 'group_name': groupName, 'member': u}));
+                                } catch (e) {
+                                  debugPrint('Eroare la add_to_group: $e');
                                 }
-                                setState(() {});
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Am trimis invitații pentru ${addSelection.length} utilizatori')));
-                              },
+                                // optimistic local update
+                                groupMembers.putIfAbsent(groupName, () => <String>{});
+                                groupMembers[groupName]!.add(u);
+                              }
+                              setState(() {});
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Am trimis invitații pentru ${addSelection.length} utilizatori')));
+                            },
                         child: const Text('Adaugă selectați'),
                       ),
                       const Divider(),
@@ -332,7 +333,11 @@ class ChatScreenState extends State<ChatScreen> {
                               value: removeSelection.contains(m),
                               onChanged: (v) {
                                 setState(() {
-                                  if (v == true) removeSelection.add(m); else removeSelection.remove(m);
+                                  if (v == true) {
+                                    removeSelection.add(m);
+                                  } else {
+                                    removeSelection.remove(m);
+                                  }
                                 });
                               },
                             );
@@ -347,16 +352,20 @@ class ChatScreenState extends State<ChatScreen> {
                               for (final m in removeSelection) {
                                 try {
                                   channel.sink.add(jsonEncode({'type': 'remove_from_group', 'group_name': groupName, 'member': m}));
-                                } catch (e) {}
+                                } catch (e) {
+                                  debugPrint('Eroare la notify remove_from_group: $e');
+                                }
                                 try {
                                   // also notify the removed user directly so their client can update immediately
                                   channel.sink.add(jsonEncode({
                                     'type': 'private_message',
                                     'username': widget.username,
                                     'target': m,
-                                    'message': '__REMOVED_FROM_GROUP::${groupName}',
+                                    'message': '__REMOVED_FROM_GROUP::$groupName',
                                   }));
-                                } catch (e) {}
+                                } catch (e) {
+                                  debugPrint('Eroare la notify private_message for removal: $e');
+                                }
                                 // optimistic local update
                                 groupMembers.putIfAbsent(groupName, () => <String>{});
                                 groupMembers[groupName]!.remove(m);
@@ -385,6 +394,7 @@ class ChatScreenState extends State<ChatScreen> {
                             ),
                           );
                           if (confirm == true) {
+                            if (!mounted) return;
                             try {
                               // notify members directly so their clients can update immediately
                               final membersToNotify = List<String>.from(groupMembers[groupName] ?? <String>[]);
@@ -394,12 +404,16 @@ class ChatScreenState extends State<ChatScreen> {
                                     'type': 'private_message',
                                     'username': widget.username,
                                     'target': m,
-                                    'message': '__DELETED_GROUP::${groupName}',
+                                    'message': 'DELETED_GROUP::$groupName',
                                   }));
-                                } catch (e) {}
+                                } catch (e) {
+                                  debugPrint('Eroare la notify DELETED_GROUP to $m: $e');
+                                }
                               }
                               channel.sink.add(jsonEncode({'type': 'delete_group', 'group_name': groupName}));
-                            } catch (e) {}
+                            } catch (e) {
+                              debugPrint('Eroare la notificarea ștergerii grupului $groupName: $e');
+                            }
                             // local cleanup
                             setState(() {
                               groups.remove(groupName);
@@ -411,6 +425,7 @@ class ChatScreenState extends State<ChatScreen> {
                               groupMembers.remove(groupName);
                               groupCreators.remove(groupName);
                             });
+                            if (!mounted) return;
                             Navigator.of(context).pop();
                             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $groupName a fost marcat pentru ștergere')));
                           }
@@ -462,48 +477,63 @@ class ChatScreenState extends State<ChatScreen> {
       connectToServer();
     } else {
       channel = widget.channel!;
-      channel.stream.listen(
-        (message) {
-          setState(() {
-            isConnected = true;
-          });
-          final data = jsonDecode(message) as Map<String, dynamic>;
-          handleServerMessage(data);
-        },
-        onError: (error) {
-          debugPrint('Eroare WebSocket: $error');
-          handleDisconnect();
-        },
-        onDone: () {
-          debugPrint('WebSocket deconectat');
-          handleDisconnect();
-        },
-      );
+      // Ensure the stream can be listened to even if another listener exists
+      final incoming = channel.stream;
+      final listenStream = incoming.isBroadcast ? incoming : incoming.asBroadcastStream();
+      try {
+        listenStream.listen(
+          (message) {
+            setState(() {
+              isConnected = true;
+            });
+            final data = jsonDecode(message) as Map<String, dynamic>;
+            handleServerMessage(data);
+          },
+          onError: (error) {
+            debugPrint('Eroare WebSocket: $error');
+            handleDisconnect();
+          },
+          onDone: () {
+            debugPrint('WebSocket deconectat');
+            handleDisconnect();
+          },
+        );
+      } on StateError catch (e) {
+        debugPrint('Nu se poate asculta stream-ul WebSocket (este deja ascultat): $e');
+      }
     }
   }
 
   void connectToServer() {
     try {
       channel = WebSocketChannel.connect(Uri.parse(host));
-      channel.stream.listen(
-        (message) {
-          setState(() {
-            isConnected = true;
-            reconnectAttempts = 0;
-          });
-          startKeepAlive();
-          final data = jsonDecode(message) as Map<String, dynamic>;
-          handleServerMessage(data);
-        },
-        onError: (error) {
-          debugPrint('Eroare WebSocket: $error');
-          handleDisconnect();
-        },
-        onDone: () {
-          debugPrint('WebSocket deconectat');
-          handleDisconnect();
-        },
-      );
+      // Use a broadcast stream to avoid duplicate-listen StateError when someone else
+      // (e.g., a parent) also listened to the same WebSocket stream.
+      final incoming = channel.stream;
+      final listenStream = incoming.isBroadcast ? incoming : incoming.asBroadcastStream();
+      try {
+        listenStream.listen(
+          (message) {
+            setState(() {
+              isConnected = true;
+              reconnectAttempts = 0;
+            });
+            startKeepAlive();
+            final data = jsonDecode(message) as Map<String, dynamic>;
+            handleServerMessage(data);
+          },
+          onError: (error) {
+            debugPrint('Eroare WebSocket: $error');
+            handleDisconnect();
+          },
+          onDone: () {
+            debugPrint('WebSocket deconectat');
+            handleDisconnect();
+          },
+        );
+      } on StateError catch (e) {
+        debugPrint('Nu se poate asculta stream-ul WebSocket (este deja ascultat): $e');
+      }
 
       channel.sink.add(
         jsonEncode({'type': 'auth', 'username': widget.username}),
@@ -523,18 +553,20 @@ class ChatScreenState extends State<ChatScreen> {
             channel.sink.add(jsonEncode({'type': 'ping', 'username': widget.username}));
           }
         } catch (e) {
-          // ignore send errors
+          debugPrint('Eroare la trimiterea ping-ului: $e');
         }
       });
     } catch (e) {
-      // ignore timer errors
+      debugPrint('Eroare la pornirea timer-ului keepAlive: $e');
     }
   }
 
   void stopKeepAlive() {
     try {
       keepAliveTimer?.cancel();
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('Eroare la oprirea timer-ului keepAlive: $e');
+    }
     keepAliveTimer = null;
   }
 
@@ -592,7 +624,7 @@ class ChatScreenState extends State<ChatScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ai fost eliminat din grupul $removedGroup')));
                 changeChat('General');
               }
-            } else if (target == widget.username && messageText.startsWith('__DELETED_GROUP::')) {
+            } else if (target == widget.username && messageText.startsWith('DELETED_GROUP::')) {
               final parts = messageText.split('::');
               final deletedGroup = parts.length > 1 ? parts[1] : '';
               groupMembers.remove(deletedGroup);
@@ -740,9 +772,14 @@ class ChatScreenState extends State<ChatScreen> {
       unreadCounts.remove(newChat);
     });
     loadDraft(newChat);
-    // Închide doar drawer-ul dacă este deschis (pe ecran îngust)
-    if (Scaffold.of(context).isDrawerOpen) {
-      Navigator.pop(context);
+    // Închide doar drawer-ul dacă este deschis (pe ecran îngust).
+    // Guard the call to avoid popping the navigation stack on narrow screens.
+    try {
+      if (Scaffold.of(context).isDrawerOpen) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      // ignore: context may not have a Scaffold ancestor; nothing to close
     }
   }
 
@@ -1281,6 +1318,8 @@ class ChatScreenState extends State<ChatScreen> {
 }
 
 class TypingIndicator extends StatefulWidget {
+  const TypingIndicator({super.key});
+
   @override
   State<TypingIndicator> createState() => TypingIndicatorState();
 }

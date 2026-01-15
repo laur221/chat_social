@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:window_size/window_size.dart';
@@ -167,45 +166,57 @@ class _LoginScreenState extends State<LoginScreen> {
                                     try {
                                       channel.sink.close();
                                     } catch (_) {}
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Username sau parolă greșită'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
+                                    if (!mounted) {
                                       setState(() {
                                         _isLoading = false;
                                       });
+                                      return;
                                     }
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Username sau parolă greșită'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                    setState(() {
+                                      _isLoading = false;
+                                    });
                                   }
                                 } catch (e) {
                                   try {
                                     channel.sink.close();
                                   } catch (_) {}
                                   debugPrint('Login exception: $e');
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Eroare: $e'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
+                                  if (!mounted) {
+                                    setState(() {
+                                      _isLoading = false;
+                                    });
+                                    return;
                                   }
-                                  setState(() {
-                                    _isLoading = false;
-                                  });
-                                }
-                              } catch (e) {
-                                debugPrint('Login exception: $e');
-                                if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text('Eroare: $e'),
                                       backgroundColor: Colors.red,
                                     ),
                                   );
+                                  setState(() {
+                                    _isLoading = false;
+                                  });
                                 }
+                              } catch (e) {
+                                debugPrint('Login exception: $e');
+                                if (!mounted) {
+                                  setState(() {
+                                    _isLoading = false;
+                                  });
+                                  return;
+                                }
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Eroare: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
                                 setState(() {
                                   _isLoading = false;
                                 });

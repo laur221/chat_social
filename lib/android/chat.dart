@@ -275,7 +275,14 @@ class ChatScreenState extends State<ChatScreen> {
       unreadCounts.remove(newChat);
     });
     loadDraft(newChat);
-    Navigator.pop(context);
+    // Close drawer only if it's open (on narrow screens). Avoid popping the route.
+    try {
+      if (Scaffold.of(context).isDrawerOpen) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      // If scaffold context lookup fails, ignore (no drawer to close)
+    }
   }
 
   void togglePin(String chatId) {

@@ -160,32 +160,40 @@ class _LoginScreenState extends State<LoginScreen> {
                                     _isLoading = false;
                                   });
                                 }
-                              } catch (e) {
+                                } catch (e) {
                                 // timeout or parse error
                                 try {
                                   channel.sink.close();
                                 } catch (_) {}
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Eroare la autentificare: $e'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
+                                if (!mounted) {
                                   setState(() {
                                     _isLoading = false;
                                   });
+                                  return;
                                 }
-                              }
-                            } catch (e) {
-                              if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text('Eroare: $e'),
+                                    content: Text('Eroare la autentificare: $e'),
                                     backgroundColor: Colors.red,
                                   ),
                                 );
+                                setState(() {
+                                  _isLoading = false;
+                                });
                               }
+                            } catch (e) {
+                              if (!mounted) {
+                                setState(() {
+                                  _isLoading = false;
+                                });
+                                return;
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Eroare: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
                               setState(() {
                                 _isLoading = false;
                               });
