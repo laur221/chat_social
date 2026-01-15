@@ -123,26 +123,60 @@ class _LoginScreenState extends State<LoginScreen> {
                                 Uri.parse(host),
                               );
 
-                              channel.sink.add(
-                                jsonEncode({
-                                    "type": "auth",
-                                    "username": username,
-                                    "password": password,
-                                }),
-                              );
+                              channel.sink.add(jsonEncode({
+                                "type": "auth",
+                                "username": username,
+                                "password": password,
+                              }));
 
-                              // Așteptăm 1 secundă pentru autentificare
-                              await Future.delayed(const Duration(seconds: 1));
-                              if (!mounted) return;
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ChatScreen(
-                                    username: username,
-                                    channel: channel,
-                                  ),
-                                ),
-                              );
+                              try {
+                                // Wait for server response (auth_success or auth_error)
+                                final resp = await channel.stream
+                                    .map((m) => jsonDecode(m as String) as Map<String, dynamic>)
+                                    .firstWhere((d) => d['type'] == 'auth_success' || d['type'] == 'auth_error')
+                                    .timeout(const Duration(seconds: 5));
+
+                                if (!mounted) return;
+                                if (resp['type'] == 'auth_success') {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ChatScreen(
+                                        username: username,
+                                        channel: channel,
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  // auth_error
+                                  channel.sink.close();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Username sau parolă greșită'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  setState(() {
+                                    _isLoading = false;
+                                  });
+                                }
+                              } catch (e) {
+                                // timeout or parse error
+                                try {
+                                  channel.sink.close();
+                                } catch (_) {}
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Eroare la autentificare: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                  setState(() {
+                                    _isLoading = false;
+                                  });
+                                }
+                              }
                             } catch (e) {
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(

@@ -23,25 +23,35 @@ groups: Dict[str, Set[str]] = {"General": set()}
 # ===============================
 def load_credentials(file_path):
     credentials = {}
-    print(f"[DEBUG] Loading credentials from: {file_path}", flush=True)
-    
+    # Load credentials from a file. Trim whitespace and avoid logging secrets.
     if os.path.exists(file_path):
-        print(f"[DEBUG] File {file_path} exists", flush=True)
         with open(file_path, "r") as file:
             for line in file:
                 parts = line.strip().split(":")
                 if len(parts) == 2:
-                    username, password = parts
-                    credentials[username] = password
-                    print(f"[DEBUG] Loaded user: {username}", flush=True)
+                    username = parts[0].strip()
+                    password = parts[1].strip()
+                    if username:
+                        credentials[username] = password
     else:
-        print(f"[DEBUG] File {file_path} NOT FOUND! Using defaults", flush=True)
-        # Default user pentru testing
-        credentials["1"] = "1"
-        credentials["2"] = "2"
-    
+        # Fallback: try repository-local password file for development convenience
+        alt_path = os.path.join(os.path.dirname(__file__), "password.txt")
+        if os.path.exists(alt_path):
+            with open(alt_path, "r") as file:
+                for line in file:
+                    parts = line.strip().split(":")
+                    if len(parts) == 2:
+                        username = parts[0].strip()
+                        password = parts[1].strip()
+                        if username:
+                            credentials[username] = password
+        else:
+            # Default test users (only used if no file is present)
+            credentials["1"] = "1"
+            credentials["2"] = "2"
+
+    # Do not print passwords. Only print counts for debug.
     print(f"[DEBUG] Total credentials loaded: {len(credentials)}", flush=True)
-    print(f"[DEBUG] Available users: {list(credentials.keys())}", flush=True)
     return credentials
 
 user_credentials = load_credentials("/etc/secrets/password.txt")
@@ -98,25 +108,22 @@ async def websocket_handler(request: web.Request):
                     msg_type = data.get("type")
 
                     if msg_type == "auth":
-                        username = data.get("username")
-                        password = data.get("password")
-                        print(f"[DEBUG] Auth attempt - User: '{username}', Password: '{password}'", flush=True)
-                        print(f"[DEBUG] User exists in credentials: {username in user_credentials}", flush=True)
-                        
-                        # Do NOT print or log stored passwords. Avoid leaking secrets in logs.
-                        if username in user_credentials:
-                            print(f"[DEBUG] Stored credentials found for {username}", flush=True)
-                        
-                        if username in user_credentials and user_credentials[username] == password:
+                        username = (data.get("username") or "").strip()
+                        password = (data.get("password") or "").strip()
+                        print(f"[DEBUG] Auth attempt - User: '{username}'", flush=True)
+
+                        user_exists = username in user_credentials
+                        print(f"[DEBUG] User exists in credentials: {user_exists}", flush=True)
+
+                        if user_exists and user_credentials.get(username, "") == password:
                             user_connections[username] = ws
                             print(f"[DEBUG] Auth SUCCESS for {username}", flush=True)
-                            
+
                             # Trimite auth_success
                             await ws.send_str(json.dumps({"type": "auth_success", "message": "Autentificare reușită"}))
-                            
+
                             # Trimite lista de utilizatori
                             await broadcast_user_list()
-                            
                         else:
                             print(f"[DEBUG] Auth FAILED for {username}", flush=True)
                             await ws.send_str(json.dumps({"type": "auth_error", "message": "Username sau parolă greșită"}))

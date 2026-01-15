@@ -134,31 +134,68 @@ class _LoginScreenState extends State<LoginScreen> {
                                   Uri.parse(host),
                                 );
 
-                                channel.sink.add(
-                                  jsonEncode({
-                                    "type": "auth",
-                                    "username": username,
-                                    "password": password,
-                                  }),
-                                );
+                                channel.sink.add(jsonEncode({
+                                  "type": "auth",
+                                  "username": username,
+                                  "password": password,
+                                }));
 
-                                // Așteptăm 1 secundă pentru autentificare
-                                await Future.delayed(const Duration(seconds: 1));
-                                // Setează dimensiunea și poziția ferestrei după logare
-                                await Future.delayed(const Duration(milliseconds: 100));
-                                setWindowMinSize(const Size(700, 800));
-                                setWindowMaxSize(Size.infinite);
-                                setWindowFrame(const Rect.fromLTWH(100, 100, 900, 800));
-                                if (!mounted) return;
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => ChatScreen(
-                                      username: username,
-                                      channel: channel,
-                                    ),
-                                  ),
-                                );
+                                try {
+                                  final resp = await channel.stream
+                                      .map((m) => jsonDecode(m as String) as Map<String, dynamic>)
+                                      .firstWhere((d) => d['type'] == 'auth_success' || d['type'] == 'auth_error')
+                                      .timeout(const Duration(seconds: 5));
+
+                                  if (resp['type'] == 'auth_success') {
+                                    // Setează dimensiunea și poziția ferestrei după logare
+                                    await Future.delayed(const Duration(milliseconds: 100));
+                                    setWindowMinSize(const Size(700, 800));
+                                    setWindowMaxSize(Size.infinite);
+                                    setWindowFrame(const Rect.fromLTWH(100, 100, 900, 800));
+                                    if (!mounted) return;
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ChatScreen(
+                                          username: username,
+                                          channel: channel,
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    // auth_error
+                                    try {
+                                      channel.sink.close();
+                                    } catch (_) {}
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Username sau parolă greșită'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      setState(() {
+                                        _isLoading = false;
+                                      });
+                                    }
+                                  }
+                                } catch (e) {
+                                  try {
+                                    channel.sink.close();
+                                  } catch (_) {}
+                                  debugPrint('Login exception: $e');
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Eroare: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                  setState(() {
+                                    _isLoading = false;
+                                  });
+                                }
                               } catch (e) {
                                 debugPrint('Login exception: $e');
                                 if (mounted) {
