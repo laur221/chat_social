@@ -141,20 +141,23 @@ class _LoginScreenState extends State<LoginScreen> {
                                   debugPrint('Login: received resp ${resp['type']}');
 
                                   if (resp['type'] == 'auth_success') {
-                                    // Setează dimensiunea și poziția ferestrei după logare
+                                    // Set window size after successful login
                                     await Future.delayed(const Duration(milliseconds: 100));
                                     setWindowMinSize(const Size(700, 800));
-                                    setWindowMaxSize(Size.infinite);
-                                    setWindowFrame(const Rect.fromLTWH(100, 100, 900, 800));
                                     if (!mounted) return;
-                                    Navigator.pushReplacement(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => ChatScreen(username: username, channel: channel),
-                                      ),
-                                    );
-                                  } else {
-                                    // auth_error
+                                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                                      Navigator.pushReplacement(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => ChatScreen(
+                                            username: username,
+                                            channel: channel,
+                                          ),
+                                        ),
+                                      );
+                                    });
+                                  } else if (resp['type'] == 'auth_error') {
+                                    // Authentication failed on server
                                     try {
                                       channel.sink.close();
                                     } catch (_) {}

@@ -291,7 +291,11 @@ class ChatScreenState extends State<ChatScreen> {
                               value: addSelection.contains(u),
                               onChanged: (v) {
                                 setState(() {
-                                  if (v == true) addSelection.add(u); else addSelection.remove(u);
+                                  if (v == true) {
+                                    addSelection.add(u);
+                                  } else {
+                                    addSelection.remove(u);
+                                  }
                                 });
                               },
                             );
@@ -426,8 +430,10 @@ class ChatScreenState extends State<ChatScreen> {
                               groupCreators.remove(groupName);
                             });
                             if (!mounted) return;
-                            Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $groupName a fost marcat pentru ștergere')));
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              Navigator.of(context).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $groupName a fost marcat pentru ștergere')));
+                            });
                           }
                         },
                         child: const Text('Șterge grup'),

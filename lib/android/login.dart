@@ -138,26 +138,30 @@ class _LoginScreenState extends State<LoginScreen> {
 
                                 if (!mounted) return;
                                 if (resp['type'] == 'auth_success') {
-                                  Navigator.pushReplacement(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => ChatScreen(
-                                        username: username,
-                                        channel: channel,
+                                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ChatScreen(
+                                          username: username,
+                                          channel: channel,
+                                        ),
                                       ),
-                                    ),
-                                  );
+                                    );
+                                  });
                                 } else {
                                   // auth_error
                                   channel.sink.close();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Username sau parolă greșită'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                  setState(() {
-                                    _isLoading = false;
+                                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Username sau parolă greșită'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                    setState(() {
+                                      _isLoading = false;
+                                    });
                                   });
                                 }
                                 } catch (e) {
