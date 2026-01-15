@@ -240,6 +240,15 @@ async def websocket_handler(request: web.Request):
                                 "typing": is_typing
                             }))
 
+                    elif msg_type == "request_user_list" and username:
+                        # Client explicitly requested the current user list
+                        other_users = [u for u in user_connections.keys() if u != username]
+                        try:
+                            await ws.send_str(json.dumps({"type": "user_list", "users": other_users}))
+                            print(f"[DEBUG] Responded to request_user_list for {username}: {other_users}", flush=True)
+                        except Exception as e:
+                            print(f"[DEBUG] Error sending requested user_list to {username}: {e}", flush=True)
+
                 except json.JSONDecodeError as e:
                     print(f"[DEBUG] JSON decode error: {e}", flush=True)
             

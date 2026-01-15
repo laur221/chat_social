@@ -133,8 +133,19 @@ class _LoginScreenState extends State<LoginScreen> {
                                 channel.sink.add(jsonEncode({"type": "auth", "username": username, "password": password}));
 
                                 try {
+                                  // Create a broadcast controller and forward socket events
+                                  // into it so both the login waiter and ChatScreen can listen.
+                                  final controller = StreamController.broadcast();
+                                  final forwardSub = channel.stream.listen(
+                                    (e) => controller.add(e),
+                                    onError: (e) => controller.addError(e),
+                                    onDone: () {
+                                      controller.close();
+                                    },
+                                  );
+
                                   debugPrint('Login: awaiting auth response');
-                                  final resp = await channel.stream
+                                  final resp = await controller.stream
                                       .map((m) => jsonDecode(m as String) as Map<String, dynamic>)
                                       .firstWhere((d) => d['type'] == 'auth_success' || d['type'] == 'auth_error')
                                       .timeout(const Duration(seconds: 5));
@@ -152,15 +163,20 @@ class _LoginScreenState extends State<LoginScreen> {
                                           builder: (context) => ChatScreen(
                                             username: username,
                                             channel: channel,
+                                            incomingStream: controller.stream,
                                           ),
                                         ),
                                       );
                                     });
                                   } else if (resp['type'] == 'auth_error') {
                                     // Authentication failed on server
+                                    await forwardSub.cancel();
                                     try {
+                                      debugPrint('Login: closing channel due to auth_error for $username');
                                       channel.sink.close();
-                                    } catch (_) {}
+                                    } catch (e) {
+                                      debugPrint('Login: error closing channel: $e');
+                                    }
                                     debugPrint('Login: auth_error received');
                                     if (!mounted) {
                                       setState(() {

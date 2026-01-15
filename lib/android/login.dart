@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'chat.dart';
 import 'dart:convert';
+import 'dart:async';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -123,6 +124,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 Uri.parse(host),
                               );
 
+
                               channel.sink.add(jsonEncode({
                                 "type": "auth",
                                 "username": username,
@@ -130,8 +132,19 @@ class _LoginScreenState extends State<LoginScreen> {
                               }));
 
                               try {
+                                // Create a broadcast controller and forward socket events
+                                // into it so both the login waiter and ChatScreen can listen.
+                                final controller = StreamController.broadcast();
+                                final forwardSub = channel.stream.listen(
+                                  (e) => controller.add(e),
+                                  onError: (e) => controller.addError(e),
+                                  onDone: () {
+                                    controller.close();
+                                  },
+                                );
+
                                 // Wait for server response (auth_success or auth_error)
-                                final resp = await channel.stream
+                                final resp = await controller.stream
                                     .map((m) => jsonDecode(m as String) as Map<String, dynamic>)
                                     .firstWhere((d) => d['type'] == 'auth_success' || d['type'] == 'auth_error')
                                     .timeout(const Duration(seconds: 5));
@@ -145,13 +158,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                         builder: (context) => ChatScreen(
                                           username: username,
                                           channel: channel,
+                                          incomingStream: controller.stream,
                                         ),
                                       ),
                                     );
                                   });
                                 } else {
                                   // auth_error
-                                  channel.sink.close();
+                                  await forwardSub.cancel();
+                                  try {
+                                    channel.sink.close();
+                                  } catch (_) {}
                                   WidgetsBinding.instance.addPostFrameCallback((_) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(

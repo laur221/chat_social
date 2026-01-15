@@ -7,8 +7,9 @@ import 'login.dart';
 class ChatScreen extends StatefulWidget {
   final String username;
   final WebSocketChannel? channel;
+  final Stream<dynamic>? incomingStream;
 
-  const ChatScreen({super.key, required this.username, this.channel});
+  const ChatScreen({super.key, required this.username, this.channel, this.incomingStream});
 
   @override
   State<ChatScreen> createState() => ChatScreenState();
@@ -47,7 +48,8 @@ class ChatScreenState extends State<ChatScreen> {
       connectToServer();
     } else {
       channel = widget.channel!;
-      channel.stream.listen(
+      final incoming = widget.incomingStream ?? (channel.stream.isBroadcast ? channel.stream : channel.stream.asBroadcastStream());
+      incoming.listen(
         (message) {
           setState(() {
             isConnected = true;
@@ -62,8 +64,13 @@ class ChatScreenState extends State<ChatScreen> {
           handleDisconnect();
         },
       );
-      
     }
+      // Ask server for a fresh user list in case it was sent before this listener started
+      try {
+        channel.sink.add(jsonEncode({'type': 'request_user_list', 'username': widget.username}));
+      } catch (e) {
+        // ignore
+      }
   }
 
   void connectToServer() {
@@ -105,8 +112,11 @@ class ChatScreenState extends State<ChatScreen> {
       setState(() {
         switch (data['type'] as String) {
           case 'user_list':
+            // Debug: log received user list
+            final received = (data['users'] as List).cast<String>();
+            debugPrint('Android client received user_list: $received');
             users.clear();
-            users.addAll((data['users'] as List).cast<String>());
+            users.addAll(received);
             break;
           case 'typing':
             final sender = data['username'] as String;
@@ -124,7 +134,9 @@ class ChatScreenState extends State<ChatScreen> {
               isPrivate: false,
               group: 'General',
             );
-            messages.add(msg);
+            if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+              messages.add(msg);
+            }
             if (selectedChat != 'General') {
               unreadCounts['General'] = (unreadCounts['General'] ?? 0) + 1;
             }
@@ -167,7 +179,9 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: true,
                 target: target,
               );
-              messages.add(msg);
+              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+                messages.add(msg);
+              }
               if (selectedChat != sender && target == widget.username) {
                 unreadCounts[sender] = (unreadCounts[sender] ?? 0) + 1;
               }
@@ -184,7 +198,9 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: false,
                 group: group,
               );
-              messages.add(msg);
+              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+                messages.add(msg);
+              }
               if (selectedChat != group) {
                 unreadCounts[group] = (unreadCounts[group] ?? 0) + 1;
               }
@@ -827,36 +843,39 @@ class ChatScreenState extends State<ChatScreen> {
           color: const Color.fromARGB(255, 201, 173, 167),
           child: ListView(
             children: [
-              UserAccountsDrawerHeader(
-                decoration: const BoxDecoration(
-                  color: Color.fromARGB(255, 176, 148, 142),
-                ),
-                accountName: Text(
-                  widget.username,
-                  style: const TextStyle(color: Colors.white, fontSize: 20),
-                ),
-                accountEmail: const Text(
-                  '',
-                  style: TextStyle(color: Colors.white),
-                ),
-                currentAccountPicture: CircleAvatar(
+          // Compact header (match Windows): avatar + name inline, smaller height
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: const Color.fromARGB(255, 176, 148, 142),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 18,
                   backgroundColor: Colors.white,
                   child: Text(
                     widget.username[0].toUpperCase(),
                     style: const TextStyle(
                       color: Color.fromARGB(255, 201, 173, 167),
-                      fontSize: 24,
+                      fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-                otherAccountsPictures: [
-                  IconButton(
-                    icon: const Icon(Icons.logout, color: Colors.white),
-                    onPressed: logout,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.username,
+                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.white),
+                  onPressed: logout,
+                ),
+              ],
+            ),
+          ),
               const Padding(
                 padding: EdgeInsets.all(8.0),
                 child: Text(
@@ -907,38 +926,29 @@ class ChatScreenState extends State<ChatScreen> {
                   trailing: group != 'General'
                       ? Row(
                           mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 4),
-                                  child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
-                                )
-                              else
-                                const SizedBox(width: 18),
-                              IconButton(
-                                icon: Icon(
-                                  pinnedChats.contains(group)
-                                      ? Icons.push_pin
-                                      : Icons.push_pin_outlined,
-                                  color: Color.fromARGB(255, 103, 80, 164),
-                                ),
-                                onPressed: () => togglePin(group),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.add_circle,
-                                  color: Color.fromARGB(255, 103, 80, 164),
-                                ),
-                                onPressed: () => addToGroup(group),
-                              ),
-                            ],
-                        )
+                      children: [
+                        if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                          )
+                        else
+                          const SizedBox(width: 18),
+                        // Only show settings/pin; removing add-user icon (settings available to creators)
+                        IconButton(
+                          icon: Icon(
+                            pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
+                            color: const Color.fromARGB(255, 103, 80, 164),
+                          ),
+                          onPressed: () => togglePin(group),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                    )
                       : IconButton(
                           icon: Icon(
-                            pinnedChats.contains(group)
-                                ? Icons.push_pin
-                                : Icons.push_pin_outlined,
-                            color: Colors.white,
+                            pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
+                            color: const Color.fromARGB(255, 201, 173, 167),
                           ),
                           onPressed: () => togglePin(group),
                         ),
@@ -1212,6 +1222,8 @@ class ChatScreenState extends State<ChatScreen> {
 }
 
 class TypingIndicator extends StatefulWidget {
+  const TypingIndicator({super.key});
+
   @override
   State<TypingIndicator> createState() => TypingIndicatorState();
 }

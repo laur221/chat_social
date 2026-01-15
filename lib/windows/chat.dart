@@ -8,8 +8,9 @@ import 'login.dart';
 class ChatScreen extends StatefulWidget {
   final String username;
   final WebSocketChannel? channel;
+  final Stream<dynamic>? incomingStream;
 
-  const ChatScreen({super.key, required this.username, this.channel});
+  const ChatScreen({super.key, required this.username, this.channel, this.incomingStream});
 
   @override
   State<ChatScreen> createState() => ChatScreenState();
@@ -72,8 +73,8 @@ class ChatScreenState extends State<ChatScreen> {
           } catch (e) {
             debugPrint('Eroare la trimiterea mesajului public: $e');
           }
-          // Optimistically show public message locally so user sees it immediately
-          addSentMessage(message, false, group: 'General');
+          // Do not optimistically add public messages here to avoid duplicate
+          // display when the server echoes the message back.
           drafts.remove('General');
           messageController.clear();
         } else if (users.contains(selectedChat)) {
@@ -116,6 +117,12 @@ class ChatScreenState extends State<ChatScreen> {
         sendTypingIndicator(false);
       } catch (e) {
         debugPrint('Eroare la trimiterea mesajului: $e');
+      }
+      // Ask server for a fresh user list in case it was sent before this listener started
+      try {
+        channel.sink.add(jsonEncode({'type': 'request_user_list', 'username': widget.username}));
+      } catch (e) {
+        debugPrint('request_user_list send failed: $e');
       }
     }
 
@@ -478,13 +485,15 @@ class ChatScreenState extends State<ChatScreen> {
       Future.delayed(const Duration(milliseconds: 100), () {
         setWindowMinSize(const Size(700, 800));
         setWindowMaxSize(Size.infinite);
+        setWindowFrame(const Rect.fromLTWH(100, 100, 700, 800));
       });
     if (widget.channel == null) {
       connectToServer();
     } else {
       channel = widget.channel!;
-      // Ensure the stream can be listened to even if another listener exists
-      final incoming = channel.stream;
+      // Prefer an incomingStream provided by the login flow (already broadcast),
+      // otherwise make a broadcast view of the channel stream.
+      final incoming = widget.incomingStream ?? channel.stream;
       final listenStream = incoming.isBroadcast ? incoming : incoming.asBroadcastStream();
       try {
         listenStream.listen(
@@ -586,8 +595,11 @@ class ChatScreenState extends State<ChatScreen> {
       setState(() {
         switch (data['type'] as String) {
           case 'user_list':
+            // Debug: log received user list
+            final received = (data['users'] as List).cast<String>();
+            debugPrint('Windows client received user_list: $received');
             users.clear();
-            users.addAll((data['users'] as List).cast<String>());
+            users.addAll(received);
             break;
           case 'typing':
             final sender = data['username'] as String;
@@ -605,7 +617,10 @@ class ChatScreenState extends State<ChatScreen> {
               isPrivate: false,
               group: 'General',
             );
-            messages.add(msg);
+            // avoid duplicating optimistic local messages echoed back from server
+            if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+              messages.add(msg);
+            }
             if (selectedChat != 'General') {
               unreadCounts['General'] = (unreadCounts['General'] ?? 0) + 1;
             }
@@ -650,7 +665,9 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: true,
                 target: target,
               );
-              messages.add(msg);
+              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+                messages.add(msg);
+              }
               if (selectedChat != sender && target == widget.username) {
                 unreadCounts[sender] = (unreadCounts[sender] ?? 0) + 1;
               }
@@ -667,7 +684,9 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: false,
                 group: group,
               );
-              messages.add(msg);
+              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+                messages.add(msg);
+              }
               if (selectedChat != group) {
                 unreadCounts[group] = (unreadCounts[group] ?? 0) + 1;
               }
@@ -832,7 +851,12 @@ class ChatScreenState extends State<ChatScreen> {
   void dispose() {
     // save current draft before disposing
     saveCurrentDraft();
-    channel.sink.close();
+    try {
+      debugPrint('Chat.dispose: closing channel for ${widget.username}');
+      channel.sink.close();
+    } catch (e) {
+      debugPrint('Chat.dispose: error closing channel: $e');
+    }
     messageController.dispose();
     messageScrollController.dispose();
     typingTimer?.cancel();
@@ -1297,9 +1321,10 @@ class ChatScreenState extends State<ChatScreen> {
     }
 
     try {
+      debugPrint('Chat.logout: closing channel for ${widget.username}');
       channel.sink.close();
     } catch (e) {
-      // ignore close errors
+      debugPrint('Chat.logout: error closing channel: $e');
     }
 
     stopKeepAlive();
@@ -1309,8 +1334,8 @@ class ChatScreenState extends State<ChatScreen> {
     // Reset window size/position to login defaults before returning
     try {
       setWindowMinSize(const Size(600, 600));
-      setWindowMaxSize(const Size(600, 600));
-      setWindowFrame(const Rect.fromLTWH(100, 100, 600, 600));
+      setWindowMaxSize(Size.infinite);
+      setWindowFrame(const Rect.fromLTWH(100, 100, 700, 800));
     } catch (e) {
       // ignore window sizing errors on unsupported platforms
     }
