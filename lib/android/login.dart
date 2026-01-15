@@ -118,7 +118,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             }
 
                             try {
-                              print('[DEBUG] Login attempt for: $username');
 
                               final channel = WebSocketChannel.connect(
                                 Uri.parse(host),
@@ -134,20 +133,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
                               // Așteptăm 1 secundă pentru autentificare
                               await Future.delayed(const Duration(seconds: 1));
-                              
-                              if (mounted) {
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => ChatScreen(
-                                      username: username,
-                                      channel: channel,
-                                    ),
+                              if (!mounted) return;
+                              Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ChatScreen(
+                                    username: username,
+                                    channel: channel,
                                   ),
-                                );
-                              }
+                                ),
+                              );
                             } catch (e) {
-                              print('[DEBUG] Exception: $e');
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
@@ -199,10 +195,10 @@ class PasswordField extends StatefulWidget {
   const PasswordField({super.key, required this.controller});
 
   @override
-  _PasswordFieldState createState() => _PasswordFieldState();
+  PasswordFieldState createState() => PasswordFieldState();
 }
 
-class _PasswordFieldState extends State<PasswordField> {
+class PasswordFieldState extends State<PasswordField> {
   bool _isObscured = true;
 
   @override

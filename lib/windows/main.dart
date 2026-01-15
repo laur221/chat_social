@@ -5,7 +5,6 @@ import 'login.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   setWindowTitle('Chat Social PC');
-      // setWindowMinSize(const Size(300, 200));
   runApp(const ChatApp());
 }
 

@@ -116,7 +116,7 @@ class ChatScreenState extends State<ChatScreen> {
 
         sendTypingIndicator(false);
       } catch (e) {
-        print('Eroare la trimiterea mesajului: $e');
+        debugPrint('Eroare la trimiterea mesajului: $e');
       }
     }
 
@@ -459,7 +459,6 @@ class ChatScreenState extends State<ChatScreen> {
         setWindowMaxSize(Size.infinite);
       });
     if (widget.channel == null) {
-      print('[DEBUG] No channel provided, connecting...');
       connectToServer();
     } else {
       channel = widget.channel!;
@@ -472,15 +471,14 @@ class ChatScreenState extends State<ChatScreen> {
           handleServerMessage(data);
         },
         onError: (error) {
-          print('Eroare WebSocket: $error');
+          debugPrint('Eroare WebSocket: $error');
           handleDisconnect();
         },
         onDone: () {
-          print('WebSocket deconectat');
+          debugPrint('WebSocket deconectat');
           handleDisconnect();
         },
       );
-      print('[DEBUG] Using existing channel from login');
     }
   }
 
@@ -498,11 +496,11 @@ class ChatScreenState extends State<ChatScreen> {
           handleServerMessage(data);
         },
         onError: (error) {
-          print('Eroare WebSocket: $error');
+          debugPrint('Eroare WebSocket: $error');
           handleDisconnect();
         },
         onDone: () {
-          print('WebSocket deconectat');
+          debugPrint('WebSocket deconectat');
           handleDisconnect();
         },
       );
@@ -510,10 +508,10 @@ class ChatScreenState extends State<ChatScreen> {
       channel.sink.add(
         jsonEncode({'type': 'auth', 'username': widget.username}),
       );
-    } catch (e) {
-      print('Eroare la conectare: $e');
-      handleDisconnect();
-    }
+      } catch (e) {
+        debugPrint('Eroare la conectare: $e');
+        handleDisconnect();
+      }
   }
 
   void startKeepAlive() {
@@ -703,7 +701,7 @@ class ChatScreenState extends State<ChatScreen> {
           }
         });
     } catch (e) {
-      print('Eroare la procesarea mesajului: $e');
+      debugPrint('Eroare la procesarea mesajului: $e');
     }
   }
 
@@ -771,7 +769,7 @@ class ChatScreenState extends State<ChatScreen> {
         );
       }
     } catch (e) {
-      print('Eroare la trimiterea typing indicator: $e');
+      debugPrint('Eroare la trimiterea typing indicator: $e');
     }
   }
 
@@ -1014,7 +1012,7 @@ class ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               selected: selectedChat == group,
-              selectedTileColor: Colors.white.withOpacity(0.24),
+                  selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
               onTap: () => changeChat(group),
               trailing: group != 'General'
                   ? Row(
@@ -1130,7 +1128,7 @@ class ChatScreenState extends State<ChatScreen> {
                 style: const TextStyle(color: Colors.white),
               ),
               selected: selectedChat == user,
-              selectedTileColor: Colors.white.withOpacity(0.24),
+                  selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
               onTap: () => changeChat(user),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,

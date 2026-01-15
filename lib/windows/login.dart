@@ -128,7 +128,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               }
 
                               try {
-                                print('[DEBUG] Login attempt for: $username');
+                                // debug login attempt removed
 
                                 final channel = WebSocketChannel.connect(
                                   Uri.parse(host),
@@ -149,19 +149,18 @@ class _LoginScreenState extends State<LoginScreen> {
                                 setWindowMinSize(const Size(700, 800));
                                 setWindowMaxSize(Size.infinite);
                                 setWindowFrame(const Rect.fromLTWH(100, 100, 900, 800));
-                                if (mounted) {
-                                  Navigator.pushReplacement(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => ChatScreen(
-                                        username: username,
-                                        channel: channel,
-                                      ),
+                                if (!mounted) return;
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ChatScreen(
+                                      username: username,
+                                      channel: channel,
                                     ),
-                                  );
-                                }
+                                  ),
+                                );
                               } catch (e) {
-                                print('[DEBUG] Exception: $e');
+                                debugPrint('Login exception: $e');
                                 if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
@@ -218,10 +217,10 @@ class PasswordField extends StatefulWidget {
   const PasswordField({super.key, required this.controller});
 
   @override
-  _PasswordFieldState createState() => _PasswordFieldState();
+  PasswordFieldState createState() => PasswordFieldState();
 }
 
-class _PasswordFieldState extends State<PasswordField> {
+class PasswordFieldState extends State<PasswordField> {
   bool _isObscured = true;
 
   @override
