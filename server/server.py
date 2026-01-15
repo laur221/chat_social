@@ -103,8 +103,9 @@ async def websocket_handler(request: web.Request):
                         print(f"[DEBUG] Auth attempt - User: '{username}', Password: '{password}'", flush=True)
                         print(f"[DEBUG] User exists in credentials: {username in user_credentials}", flush=True)
                         
+                        # Do NOT print or log stored passwords. Avoid leaking secrets in logs.
                         if username in user_credentials:
-                            print(f"[DEBUG] Stored password for {username}: '{user_credentials[username]}'", flush=True)
+                            print(f"[DEBUG] Stored credentials found for {username}", flush=True)
                         
                         if username in user_credentials and user_credentials[username] == password:
                             user_connections[username] = ws
