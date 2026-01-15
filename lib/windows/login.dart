@@ -127,23 +127,18 @@ class _LoginScreenState extends State<LoginScreen> {
                               }
 
                               try {
-                                // debug login attempt removed
-
-                                final channel = WebSocketChannel.connect(
-                                  Uri.parse(host),
-                                );
-
-                                channel.sink.add(jsonEncode({
-                                  "type": "auth",
-                                  "username": username,
-                                  "password": password,
-                                }));
+                                debugPrint('Login: connecting to $host');
+                                final channel = WebSocketChannel.connect(Uri.parse(host));
+                                debugPrint('Login: connected, sending auth for $username');
+                                channel.sink.add(jsonEncode({"type": "auth", "username": username, "password": password}));
 
                                 try {
+                                  debugPrint('Login: awaiting auth response');
                                   final resp = await channel.stream
                                       .map((m) => jsonDecode(m as String) as Map<String, dynamic>)
                                       .firstWhere((d) => d['type'] == 'auth_success' || d['type'] == 'auth_error')
                                       .timeout(const Duration(seconds: 5));
+                                  debugPrint('Login: received resp ${resp['type']}');
 
                                   if (resp['type'] == 'auth_success') {
                                     // Setează dimensiunea și poziția ferestrei după logare
@@ -155,10 +150,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     Navigator.pushReplacement(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) => ChatScreen(
-                                          username: username,
-                                          channel: channel,
-                                        ),
+                                        builder: (context) => ChatScreen(username: username, channel: channel),
                                       ),
                                     );
                                   } else {
@@ -166,18 +158,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                     try {
                                       channel.sink.close();
                                     } catch (_) {}
+                                    debugPrint('Login: auth_error received');
                                     if (!mounted) {
                                       setState(() {
                                         _isLoading = false;
                                       });
                                       return;
                                     }
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Username sau parolă greșită'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username sau parolă greșită'), backgroundColor: Colors.red));
                                     setState(() {
                                       _isLoading = false;
                                     });
@@ -186,37 +174,27 @@ class _LoginScreenState extends State<LoginScreen> {
                                   try {
                                     channel.sink.close();
                                   } catch (_) {}
-                                  debugPrint('Login exception: $e');
+                                  debugPrint('Login exception while waiting for response: $e');
                                   if (!mounted) {
                                     setState(() {
                                       _isLoading = false;
                                     });
                                     return;
                                   }
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text('Eroare: $e'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Eroare: $e'), backgroundColor: Colors.red));
                                   setState(() {
                                     _isLoading = false;
                                   });
                                 }
                               } catch (e) {
-                                debugPrint('Login exception: $e');
+                                debugPrint('Login exception connecting/sending auth: $e');
                                 if (!mounted) {
                                   setState(() {
                                     _isLoading = false;
                                   });
                                   return;
                                 }
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Eroare: $e'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Eroare: $e'), backgroundColor: Colors.red));
                                 setState(() {
                                   _isLoading = false;
                                 });
