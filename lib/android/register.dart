@@ -9,7 +9,7 @@ import 'chat.dart';
 
 const host = String.fromEnvironment(
   'CHAT_WS_HOST',
-  defaultValue: 'ws://192.168.0.117:10000/ws',
+  defaultValue: 'ws://192.168.1.116:10000/ws',
 );
 const googleWebClientId = String.fromEnvironment(
   'GOOGLE_WEB_CLIENT_ID',

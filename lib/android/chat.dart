@@ -24,7 +24,7 @@ class ChatScreen extends StatefulWidget {
 
 const host = String.fromEnvironment(
   'CHAT_WS_HOST',
-  defaultValue: 'ws://192.168.0.117:10000/ws',
+  defaultValue: 'ws://192.168.1.116:10000/ws',
 );
 
 class ChatScreenState extends State<ChatScreen> {
