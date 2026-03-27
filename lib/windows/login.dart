@@ -12,7 +12,10 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-const host = 'wss://chat-social-ng2d.onrender.com/ws';
+const host = String.fromEnvironment(
+  'CHAT_WS_HOST',
+  defaultValue: 'ws://127.0.0.1:10000/ws',
+);
 
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
@@ -128,14 +131,25 @@ class _LoginScreenState extends State<LoginScreen> {
 
                               try {
                                 debugPrint('Login: connecting to $host');
-                                final channel = WebSocketChannel.connect(Uri.parse(host));
-                                debugPrint('Login: connected, sending auth for $username');
-                                channel.sink.add(jsonEncode({"type": "auth", "username": username, "password": password}));
+                                final channel = WebSocketChannel.connect(
+                                  Uri.parse(host),
+                                );
+                                debugPrint(
+                                  'Login: connected, sending auth for $username',
+                                );
+                                channel.sink.add(
+                                  jsonEncode({
+                                    "type": "auth",
+                                    "username": username,
+                                    "password": password,
+                                  }),
+                                );
 
                                 try {
                                   // Create a broadcast controller and forward socket events
                                   // into it so both the login waiter and ChatScreen can listen.
-                                  final controller = StreamController.broadcast();
+                                  final controller =
+                                      StreamController.broadcast();
                                   final forwardSub = channel.stream.listen(
                                     (e) => controller.add(e),
                                     onError: (e) => controller.addError(e),
@@ -146,36 +160,54 @@ class _LoginScreenState extends State<LoginScreen> {
 
                                   debugPrint('Login: awaiting auth response');
                                   final resp = await controller.stream
-                                      .map((m) => jsonDecode(m as String) as Map<String, dynamic>)
-                                      .firstWhere((d) => d['type'] == 'auth_success' || d['type'] == 'auth_error')
+                                      .map(
+                                        (m) =>
+                                            jsonDecode(m as String)
+                                                as Map<String, dynamic>,
+                                      )
+                                      .firstWhere(
+                                        (d) =>
+                                            d['type'] == 'auth_success' ||
+                                            d['type'] == 'auth_error',
+                                      )
                                       .timeout(const Duration(seconds: 5));
-                                  debugPrint('Login: received resp ${resp['type']}');
+                                  debugPrint(
+                                    'Login: received resp ${resp['type']}',
+                                  );
 
                                   if (resp['type'] == 'auth_success') {
                                     // Set window size after successful login
-                                    await Future.delayed(const Duration(milliseconds: 100));
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 100),
+                                    );
                                     setWindowMinSize(const Size(700, 800));
                                     if (!mounted) return;
-                                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                                      Navigator.pushReplacement(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) => ChatScreen(
-                                            username: username,
-                                            channel: channel,
-                                            incomingStream: controller.stream,
-                                          ),
-                                        ),
-                                      );
-                                    });
+                                    WidgetsBinding.instance
+                                        .addPostFrameCallback((_) {
+                                          Navigator.pushReplacement(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => ChatScreen(
+                                                username: username,
+                                                channel: channel,
+                                                incomingStream:
+                                                    controller.stream,
+                                              ),
+                                            ),
+                                          );
+                                        });
                                   } else if (resp['type'] == 'auth_error') {
                                     // Authentication failed on server
                                     await forwardSub.cancel();
                                     try {
-                                      debugPrint('Login: closing channel due to auth_error for $username');
+                                      debugPrint(
+                                        'Login: closing channel due to auth_error for $username',
+                                      );
                                       channel.sink.close();
                                     } catch (e) {
-                                      debugPrint('Login: error closing channel: $e');
+                                      debugPrint(
+                                        'Login: error closing channel: $e',
+                                      );
                                     }
                                     debugPrint('Login: auth_error received');
                                     if (!mounted) {
@@ -184,7 +216,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                       });
                                       return;
                                     }
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username sau parolă greșită'), backgroundColor: Colors.red));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Username sau parolă greșită',
+                                        ),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
                                     setState(() {
                                       _isLoading = false;
                                     });
@@ -193,27 +232,41 @@ class _LoginScreenState extends State<LoginScreen> {
                                   try {
                                     channel.sink.close();
                                   } catch (_) {}
-                                  debugPrint('Login exception while waiting for response: $e');
+                                  debugPrint(
+                                    'Login exception while waiting for response: $e',
+                                  );
                                   if (!mounted) {
                                     setState(() {
                                       _isLoading = false;
                                     });
                                     return;
                                   }
-                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Eroare: $e'), backgroundColor: Colors.red));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Eroare: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
                                   setState(() {
                                     _isLoading = false;
                                   });
                                 }
                               } catch (e) {
-                                debugPrint('Login exception connecting/sending auth: $e');
+                                debugPrint(
+                                  'Login exception connecting/sending auth: $e',
+                                );
                                 if (!mounted) {
                                   setState(() {
                                     _isLoading = false;
                                   });
                                   return;
                                 }
-                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Eroare: $e'), backgroundColor: Colors.red));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Eroare: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
                                 setState(() {
                                   _isLoading = false;
                                 });
@@ -246,7 +299,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                   ),
-                )
+                ),
               ],
             ),
           ),

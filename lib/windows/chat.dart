@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:window_size/window_size.dart';
 import 'login.dart';
@@ -10,159 +11,277 @@ class ChatScreen extends StatefulWidget {
   final WebSocketChannel? channel;
   final Stream<dynamic>? incomingStream;
 
-  const ChatScreen({super.key, required this.username, this.channel, this.incomingStream});
+  const ChatScreen({
+    super.key,
+    required this.username,
+    this.channel,
+    this.incomingStream,
+  });
 
   @override
   State<ChatScreen> createState() => ChatScreenState();
 }
 
-const host = 'wss://chat-social-ng2d.onrender.com/ws';
+const host = String.fromEnvironment(
+  'CHAT_WS_HOST',
+  defaultValue: 'ws://127.0.0.1:10000/ws',
+);
 
 class ChatScreenState extends State<ChatScreen> {
+  List<String> getSortedGroups() {
+    final sorted = myGroups.toList();
+    sorted.sort((a, b) {
+      if (a == 'General') return -1;
+      if (b == 'General') return 1;
 
-    List<String> getSortedGroups() {
-      final sorted = myGroups.toList();
-      sorted.sort((a, b) {
-        if (a == 'General') return -1;
-        if (b == 'General') return 1;
+      final aPinned = pinnedChats.contains(a);
+      final bPinned = pinnedChats.contains(b);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
 
-        final aPinned = pinnedChats.contains(a);
-        final bPinned = pinnedChats.contains(b);
-        if (aPinned && !bPinned) return -1;
-        if (!aPinned && bPinned) return 1;
+      final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
+      final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
+      if (aUnread && !bUnread) return -1;
+      if (!aUnread && bUnread) return 1;
 
-        final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
-        final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
-        if (aUnread && !bUnread) return -1;
-        if (!aUnread && bUnread) return 1;
+      return a.compareTo(b);
+    });
+    return sorted;
+  }
 
-        return a.compareTo(b);
-      });
-      return sorted;
-    }
+  List<String> getSortedUsers() {
+    final sorted = List<String>.from(users);
+    sorted.sort((a, b) {
+      final aPinned = pinnedChats.contains(a);
+      final bPinned = pinnedChats.contains(b);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
 
-    List<String> getSortedUsers() {
-      final sorted = List<String>.from(users);
-      sorted.sort((a, b) {
-        final aPinned = pinnedChats.contains(a);
-        final bPinned = pinnedChats.contains(b);
-        if (aPinned && !bPinned) return -1;
-        if (!aPinned && bPinned) return 1;
+      final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
+      final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
+      if (aUnread && !bUnread) return -1;
+      if (!aUnread && bUnread) return 1;
 
-        final aUnread = unreadCounts.containsKey(a) && unreadCounts[a]! > 0;
-        final bUnread = unreadCounts.containsKey(b) && unreadCounts[b]! > 0;
-        if (aUnread && !bUnread) return -1;
-        if (!aUnread && bUnread) return 1;
+      return a.compareTo(b);
+    });
+    return sorted;
+  }
 
-        return a.compareTo(b);
-      });
-      return sorted;
-    }
+  void sendMessage() {
+    final message = messageController.text.trim();
+    if (message.isEmpty) return;
 
-    void sendMessage() {
-      final message = messageController.text.trim();
-      if (message.isEmpty) return;
+    debugPrint(
+      'sendMessage() -> to: $selectedChat message: ${message.replaceAll(RegExp(r"\n"), '\\n')}',
+    );
 
-        debugPrint('sendMessage() -> to: $selectedChat message: ${message.replaceAll(RegExp(r"\n"), '\\n')}');
-
+    try {
+      if (selectedChat == 'General') {
         try {
-        if (selectedChat == 'General') {
-          try {
-            channel.sink.add(jsonEncode({'type': 'message', 'username': widget.username, 'message': message}));
-            debugPrint('Public message sent to server');
-          } catch (e) {
-            debugPrint('Eroare la trimiterea mesajului public: $e');
-          }
-          // Do not optimistically add public messages here to avoid duplicate
-          // display when the server echoes the message back.
-          drafts.remove('General');
-          messageController.clear();
-        } else if (users.contains(selectedChat)) {
-          try {
-            channel.sink.add(jsonEncode({'type': 'private_message', 'username': widget.username, 'target': selectedChat, 'message': message}));
-            debugPrint('Private message sent to $selectedChat');
-          } catch (e) {
-            debugPrint('Eroare la trimiterea mesajului privat către $selectedChat: $e');
-          }
-          addSentMessage(message, true, target: selectedChat);
-          drafts.remove(selectedChat);
-          messageController.clear();
-        } else if (myGroups.contains(selectedChat)) {
-          // Ensure we are actually a member according to groupMembers map.
-          final members = groupMembers[selectedChat];
-          if (members != null && !members.contains(widget.username)) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Nu mai faci parte din grupul $selectedChat. Mesajul nu a fost trimis.')),
-            );
-            // Remove locally to avoid further attempts
-            setState(() {
-              myGroups.remove(selectedChat);
-            });
-            // Switch back to General
-            changeChat('General');
-            return;
-          }
-          // proceed to send group message
-          try {
-            channel.sink.add(jsonEncode({'type': 'group_message', 'username': widget.username, 'group': selectedChat, 'message': message}));
-            debugPrint('Group message sent to $selectedChat');
-          } catch (e) {
-            debugPrint('Eroare la trimiterea mesajului în grupul $selectedChat: $e');
-          }
-          addSentMessage(message, false, group: selectedChat);
-          drafts.remove(selectedChat);
-          messageController.clear();
+          channel.sink.add(
+            jsonEncode({
+              'type': 'message',
+              'username': widget.username,
+              'message': message,
+            }),
+          );
+          debugPrint('Public message sent to server');
+        } catch (e) {
+          debugPrint('Eroare la trimiterea mesajului public: $e');
         }
-
-        sendTypingIndicator(false);
-      } catch (e) {
-        debugPrint('Eroare la trimiterea mesajului: $e');
-      }
-      // Ask server for a fresh user list in case it was sent before this listener started
-      try {
-        channel.sink.add(jsonEncode({'type': 'request_user_list', 'username': widget.username}));
-      } catch (e) {
-        debugPrint('request_user_list send failed: $e');
-      }
-    }
-
-    void addSentMessage(String message, bool isPrivate, {String? group, String? target}) {
-      final wasNearBottom = messageScrollController.hasClients
-          ? (messageScrollController.position.maxScrollExtent - messageScrollController.offset <= 100)
-          : true;
-      setState(() {
-        messages.add(
-          ChatMessage(
-            username: widget.username,
-            message: message,
-            timestamp: DateTime.now(),
-            isPrivate: isPrivate,
-            group: group,
-            target: target,
-          ),
-        );
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!messageScrollController.hasClients) return;
-        if (wasNearBottom) {
-          messageScrollController.animateTo(
-            messageScrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
+        // Do not optimistically add public messages here to avoid duplicate
+        // display when the server echoes the message back.
+        drafts.remove('General');
+        messageController.clear();
+      } else if (users.contains(selectedChat)) {
+        try {
+          channel.sink.add(
+            jsonEncode({
+              'type': 'private_message',
+              'username': widget.username,
+              'target': selectedChat,
+              'message': message,
+            }),
+          );
+          debugPrint('Private message sent to $selectedChat');
+        } catch (e) {
+          debugPrint(
+            'Eroare la trimiterea mesajului privat către $selectedChat: $e',
           );
         }
-      });
+        addSentMessage(message, true, target: selectedChat);
+        drafts.remove(selectedChat);
+        messageController.clear();
+      } else if (myGroups.contains(selectedChat)) {
+        // Ensure we are actually a member according to groupMembers map.
+        final members = groupMembers[selectedChat];
+        if (members != null && !members.contains(widget.username)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Nu mai faci parte din grupul $selectedChat. Mesajul nu a fost trimis.',
+              ),
+            ),
+          );
+          // Remove locally to avoid further attempts
+          setState(() {
+            myGroups.remove(selectedChat);
+          });
+          // Switch back to General
+          changeChat('General');
+          return;
+        }
+        // proceed to send group message
+        try {
+          channel.sink.add(
+            jsonEncode({
+              'type': 'group_message',
+              'username': widget.username,
+              'group': selectedChat,
+              'message': message,
+            }),
+          );
+          debugPrint('Group message sent to $selectedChat');
+        } catch (e) {
+          debugPrint(
+            'Eroare la trimiterea mesajului în grupul $selectedChat: $e',
+          );
+        }
+        addSentMessage(message, false, group: selectedChat);
+        drafts.remove(selectedChat);
+        messageController.clear();
+      }
+
+      sendTypingIndicator(false);
+    } catch (e) {
+      debugPrint('Eroare la trimiterea mesajului: $e');
+    }
+    // Ask server for a fresh user list in case it was sent before this listener started
+    try {
+      channel.sink.add(
+        jsonEncode({'type': 'request_user_list', 'username': widget.username}),
+      );
+    } catch (e) {
+      debugPrint('request_user_list send failed: $e');
+    }
+  }
+
+  void addSentMessage(
+    String message,
+    bool isPrivate, {
+    String? group,
+    String? target,
+  }) {
+    final wasNearBottom = messageScrollController.hasClients
+        ? (messageScrollController.position.maxScrollExtent -
+                  messageScrollController.offset <=
+              100)
+        : true;
+    setState(() {
+      messages.add(
+        ChatMessage(
+          username: widget.username,
+          message: message,
+          timestamp: DateTime.now(),
+          isPrivate: isPrivate,
+          group: group,
+          target: target,
+        ),
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!messageScrollController.hasClients) return;
+      if (wasNearBottom) {
+        messageScrollController.animateTo(
+          messageScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void createGroup() {
+    TextEditingController groupController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Creează un grup'),
+        content: TextField(
+          controller: groupController,
+          decoration: const InputDecoration(labelText: 'Nume grup'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Anulează'),
+          ),
+          TextButton(
+            onPressed: () {
+              final groupName = groupController.text.trim();
+              if (groupName.isNotEmpty && mounted) {
+                if (groups.contains(groupName) ||
+                    groupMembers.containsKey(groupName)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Numele grupului "$groupName" există deja'),
+                    ),
+                  );
+                  return;
+                }
+                channel.sink.add(
+                  jsonEncode({
+                    'type': 'create_group',
+                    'group_name': groupName,
+                    'username': widget.username,
+                  }),
+                );
+                setState(() {
+                  if (!groups.contains(groupName)) {
+                    groups.add(groupName);
+                  }
+                  myGroups.add(groupName);
+                  // record local ownership and members optimistically
+                  groupCreators[groupName] = widget.username;
+                  groupMembers.putIfAbsent(groupName, () => <String>{});
+                  groupMembers[groupName]!.add(widget.username);
+                });
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Creează'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void addToGroup(String groupName) {
+    if (users.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nu sunt utilizatori disponibili')),
+      );
+      return;
     }
 
-    void createGroup() {
-      TextEditingController groupController = TextEditingController();
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Creează un grup'),
-          content: TextField(
-            controller: groupController,
-            decoration: const InputDecoration(labelText: 'Nume grup'),
+    String selectedUser = users.first;
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Adaugă în $groupName'),
+          content: DropdownButton<String>(
+            value: selectedUser,
+            items: users.map((user) {
+              return DropdownMenuItem<String>(value: user, child: Text(user));
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  selectedUser = value;
+                });
+              }
+            },
           ),
           actions: [
             TextButton(
@@ -171,295 +290,313 @@ class ChatScreenState extends State<ChatScreen> {
             ),
             TextButton(
               onPressed: () {
-                final groupName = groupController.text.trim();
-                if (groupName.isNotEmpty && mounted) {
-                  if (groups.contains(groupName) || groupMembers.containsKey(groupName)) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Numele grupului "$groupName" există deja')));
-                    return;
-                  }
-                  channel.sink.add(
-                    jsonEncode({
-                      'type': 'create_group',
-                      'group_name': groupName,
-                      'username': widget.username,
-                    }),
-                  );
-                  setState(() {
-                    if (!groups.contains(groupName)) {
-                      groups.add(groupName);
-                    }
-                    myGroups.add(groupName);
-                    // record local ownership and members optimistically
-                    groupCreators[groupName] = widget.username;
-                    groupMembers.putIfAbsent(groupName, () => <String>{});
-                    groupMembers[groupName]!.add(widget.username);
-                  });
-                  Navigator.pop(context);
-                }
+                channel.sink.add(
+                  jsonEncode({
+                    'type': 'add_to_group',
+                    'group_name': groupName,
+                    'member': selectedUser,
+                  }),
+                );
+                // optimistic local update of members
+                groupMembers.putIfAbsent(groupName, () => <String>{});
+                groupMembers[groupName]!.add(selectedUser);
+                if (selectedUser == widget.username) myGroups.add(groupName);
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Utilizator adăugat')),
+                );
               },
-              child: const Text('Creează'),
+              child: const Text('Adaugă'),
             ),
           ],
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    void addToGroup(String groupName) {
-      if (users.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Nu sunt utilizatori disponibili')),
-        );
-        return;
-      }
+  void showGroupSettings(String groupName) {
+    // Ensure members list exists
+    groupMembers.putIfAbsent(groupName, () => <String>{});
+    final members = groupMembers[groupName]!;
 
-      String selectedUser = users.first;
-      showDialog(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: Text('Adaugă în $groupName'),
-            content: DropdownButton<String>(
-              value: selectedUser,
-              items: users.map((user) {
-                return DropdownMenuItem<String>(value: user, child: Text(user));
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    selectedUser = value;
-                  });
-                }
-              },
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Anulează'),
-              ),
-              TextButton(
-                onPressed: () {
-                  channel.sink.add(
-                    jsonEncode({
-                      'type': 'add_to_group',
-                      'group_name': groupName,
-                      'member': selectedUser,
-                    }),
-                  );
-                    // optimistic local update of members
-                    groupMembers.putIfAbsent(groupName, () => <String>{});
-                    groupMembers[groupName]!.add(selectedUser);
-                    if (selectedUser == widget.username) myGroups.add(groupName);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Utilizator adăugat')),
-                  );
-                },
-                child: const Text('Adaugă'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+    final addSelection = <String>{};
+    final removeSelection = <String>{};
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          // Build list of users available to add (connected users not already in the group)
+          final availableToAdd = users
+              .where((u) => !members.contains(u))
+              .toList();
 
-    void showGroupSettings(String groupName) {
-      // Ensure members list exists
-      groupMembers.putIfAbsent(groupName, () => <String>{});
-      final members = groupMembers[groupName]!;
+          // For removes, list current members excluding creator
+          final creator = groupCreators[groupName] ?? '';
+          final removable = members.where((m) => m != creator).toList();
 
-      final addSelection = <String>{};
-      final removeSelection = <String>{};
-      showDialog(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setState) {
-            // Build list of users available to add (connected users not already in the group)
-            final availableToAdd = users.where((u) => !members.contains(u)).toList();
-
-            // For removes, list current members excluding creator
-            final creator = groupCreators[groupName] ?? '';
-            final removable = members.where((m) => m != creator).toList();
-
-            return AlertDialog(
-              title: Text('Setări grup: $groupName'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (availableToAdd.isNotEmpty) ...[
-                      const Align(alignment: Alignment.centerLeft, child: Text('Adaugă utilizatori')),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.maxFinite,
-                        child: Column(
-                          children: availableToAdd.map((u) {
-                            return CheckboxListTile(
-                              title: Text(u),
-                              value: addSelection.contains(u),
-                              onChanged: (v) {
-                                setState(() {
-                                  if (v == true) {
-                                    addSelection.add(u);
-                                  } else {
-                                    addSelection.remove(u);
-                                  }
-                                });
-                              },
-                            );
-                          }).toList(),
-                        ),
+          return AlertDialog(
+            title: Text('Setări grup: $groupName'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (availableToAdd.isNotEmpty) ...[
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Adaugă utilizatori'),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.maxFinite,
+                      child: Column(
+                        children: availableToAdd.map((u) {
+                          return CheckboxListTile(
+                            title: Text(u),
+                            value: addSelection.contains(u),
+                            onChanged: (v) {
+                              setState(() {
+                                if (v == true) {
+                                  addSelection.add(u);
+                                } else {
+                                  addSelection.remove(u);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
                       ),
-                      ElevatedButton(
+                    ),
+                    ElevatedButton(
                       onPressed: addSelection.isEmpty
                           ? null
                           : () {
                               for (final u in addSelection) {
                                 try {
-                                  channel.sink.add(jsonEncode({'type': 'add_to_group', 'group_name': groupName, 'member': u}));
+                                  channel.sink.add(
+                                    jsonEncode({
+                                      'type': 'add_to_group',
+                                      'group_name': groupName,
+                                      'member': u,
+                                    }),
+                                  );
                                 } catch (e) {
                                   debugPrint('Eroare la add_to_group: $e');
                                 }
                                 // optimistic local update
-                                groupMembers.putIfAbsent(groupName, () => <String>{});
+                                groupMembers.putIfAbsent(
+                                  groupName,
+                                  () => <String>{},
+                                );
                                 groupMembers[groupName]!.add(u);
                               }
                               setState(() {});
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Am trimis invitații pentru ${addSelection.length} utilizatori')));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Am trimis invitații pentru ${addSelection.length} utilizatori',
+                                  ),
+                                ),
+                              );
                             },
-                        child: const Text('Adaugă selectați'),
-                      ),
-                      const Divider(),
-                    ],
-                    const Align(alignment: Alignment.centerLeft, child: Text('Elimină membri')),
-                    const SizedBox(height: 8),
-                    if (removable.isEmpty)
-                      const Text('Nu există membri eliminabili (creatorul nu poate fi eliminat).')
-                    else
-                      SizedBox(
-                        width: double.maxFinite,
-                        child: Column(
-                          children: removable.map((m) {
-                            return CheckboxListTile(
-                              title: Text(m),
-                              value: removeSelection.contains(m),
-                              onChanged: (v) {
-                                setState(() {
-                                  if (v == true) {
-                                    removeSelection.add(m);
-                                  } else {
-                                    removeSelection.remove(m);
-                                  }
-                                });
-                              },
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                      onPressed: removeSelection.isEmpty
-                          ? null
-                          : () {
-                              for (final m in removeSelection) {
-                                try {
-                                  channel.sink.add(jsonEncode({'type': 'remove_from_group', 'group_name': groupName, 'member': m}));
-                                } catch (e) {
-                                  debugPrint('Eroare la notify remove_from_group: $e');
+                      child: const Text('Adaugă selectați'),
+                    ),
+                    const Divider(),
+                  ],
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Elimină membri'),
+                  ),
+                  const SizedBox(height: 8),
+                  if (removable.isEmpty)
+                    const Text(
+                      'Nu există membri eliminabili (creatorul nu poate fi eliminat).',
+                    )
+                  else
+                    SizedBox(
+                      width: double.maxFinite,
+                      child: Column(
+                        children: removable.map((m) {
+                          return CheckboxListTile(
+                            title: Text(m),
+                            value: removeSelection.contains(m),
+                            onChanged: (v) {
+                              setState(() {
+                                if (v == true) {
+                                  removeSelection.add(m);
+                                } else {
+                                  removeSelection.remove(m);
                                 }
-                                try {
-                                  // also notify the removed user directly so their client can update immediately
-                                  channel.sink.add(jsonEncode({
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                    ),
+                    onPressed: removeSelection.isEmpty
+                        ? null
+                        : () {
+                            for (final m in removeSelection) {
+                              try {
+                                channel.sink.add(
+                                  jsonEncode({
+                                    'type': 'remove_from_group',
+                                    'group_name': groupName,
+                                    'member': m,
+                                  }),
+                                );
+                              } catch (e) {
+                                debugPrint(
+                                  'Eroare la notify remove_from_group: $e',
+                                );
+                              }
+                              try {
+                                // also notify the removed user directly so their client can update immediately
+                                channel.sink.add(
+                                  jsonEncode({
                                     'type': 'private_message',
                                     'username': widget.username,
                                     'target': m,
-                                    'message': '__REMOVED_FROM_GROUP::$groupName',
-                                  }));
-                                } catch (e) {
-                                  debugPrint('Eroare la notify private_message for removal: $e');
-                                }
-                                // optimistic local update
-                                groupMembers.putIfAbsent(groupName, () => <String>{});
-                                groupMembers[groupName]!.remove(m);
-                                if (m == widget.username) myGroups.remove(groupName);
+                                    'message':
+                                        '__REMOVED_FROM_GROUP::$groupName',
+                                  }),
+                                );
+                              } catch (e) {
+                                debugPrint(
+                                  'Eroare la notify private_message for removal: $e',
+                                );
                               }
-                              setState(() {});
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Am eliminat ${removeSelection.length} membri')));
-                            },
-                      child: const Text('Elimină selectați'),
-                    ),
-                    const SizedBox(height: 12),
-                    // Only show delete group if current user is creator
-                    if (creator == widget.username)
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                        onPressed: () async {
-                          final confirm = await showDialog<bool>(
-                            context: context,
-                            builder: (c) => AlertDialog(
-                              title: const Text('Șterge grup'),
-                              content: const Text('Ești sigur? Grupul va fi șters pentru toți membrii.'),
-                              actions: [
-                                TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Anulează')),
-                                TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('Șterge')),
-                              ],
+                              // optimistic local update
+                              groupMembers.putIfAbsent(
+                                groupName,
+                                () => <String>{},
+                              );
+                              groupMembers[groupName]!.remove(m);
+                              if (m == widget.username) {
+                                myGroups.remove(groupName);
+                              }
+                            }
+                            setState(() {});
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Am eliminat ${removeSelection.length} membri',
+                                ),
+                              ),
+                            );
+                          },
+                    child: const Text('Elimină selectați'),
+                  ),
+                  const SizedBox(height: 12),
+                  // Only show delete group if current user is creator
+                  if (creator == widget.username)
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (c) => AlertDialog(
+                            title: const Text('Șterge grup'),
+                            content: const Text(
+                              'Ești sigur? Grupul va fi șters pentru toți membrii.',
                             ),
-                          );
-                          if (confirm == true) {
-                            if (!mounted) return;
-                            try {
-                              // notify members directly so their clients can update immediately
-                              final membersToNotify = List<String>.from(groupMembers[groupName] ?? <String>[]);
-                              for (final m in membersToNotify) {
-                                try {
-                                  channel.sink.add(jsonEncode({
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(c).pop(false),
+                                child: const Text('Anulează'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(c).pop(true),
+                                child: const Text('Șterge'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirm == true) {
+                          if (!mounted) return;
+                          try {
+                            // notify members directly so their clients can update immediately
+                            final membersToNotify = List<String>.from(
+                              groupMembers[groupName] ?? <String>[],
+                            );
+                            for (final m in membersToNotify) {
+                              try {
+                                channel.sink.add(
+                                  jsonEncode({
                                     'type': 'private_message',
                                     'username': widget.username,
                                     'target': m,
                                     'message': 'DELETED_GROUP::$groupName',
-                                  }));
-                                } catch (e) {
-                                  debugPrint('Eroare la notify DELETED_GROUP to $m: $e');
-                                }
+                                  }),
+                                );
+                              } catch (e) {
+                                debugPrint(
+                                  'Eroare la notify DELETED_GROUP to $m: $e',
+                                );
                               }
-                              channel.sink.add(jsonEncode({'type': 'delete_group', 'group_name': groupName}));
-                            } catch (e) {
-                              debugPrint('Eroare la notificarea ștergerii grupului $groupName: $e');
                             }
-                            // local cleanup
-                            setState(() {
-                              groups.remove(groupName);
-                              myGroups.remove(groupName);
-                              unreadCounts.remove(groupName);
-                              pinnedChats.remove(groupName);
-                              drafts.remove(groupName);
-                              messages.removeWhere((m) => m.group == groupName);
-                              groupMembers.remove(groupName);
-                              groupCreators.remove(groupName);
-                            });
-                            if (!mounted) return;
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              Navigator.of(context).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $groupName a fost marcat pentru ștergere')));
-                            });
+                            channel.sink.add(
+                              jsonEncode({
+                                'type': 'delete_group',
+                                'group_name': groupName,
+                              }),
+                            );
+                          } catch (e) {
+                            debugPrint(
+                              'Eroare la notificarea ștergerii grupului $groupName: $e',
+                            );
                           }
-                        },
-                        child: const Text('Șterge grup'),
-                      ),
-                  ],
-                ),
+                          // local cleanup
+                          setState(() {
+                            groups.remove(groupName);
+                            myGroups.remove(groupName);
+                            unreadCounts.remove(groupName);
+                            pinnedChats.remove(groupName);
+                            drafts.remove(groupName);
+                            messages.removeWhere((m) => m.group == groupName);
+                            groupMembers.remove(groupName);
+                            groupCreators.remove(groupName);
+                          });
+                          if (!mounted) return;
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            Navigator.of(context).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Grupul $groupName a fost marcat pentru ștergere',
+                                ),
+                              ),
+                            );
+                          });
+                        }
+                      },
+                      child: const Text('Șterge grup'),
+                    ),
+                ],
               ),
-              actions: [
-                TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Închide')),
-              ],
-            );
-          },
-        ),
-      );
-    }
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Închide'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   late WebSocketChannel channel;
   final List<String> users = [];
   final List<ChatMessage> messages = [];
   final TextEditingController messageController = TextEditingController();
+  final FocusNode messageFocusNode = FocusNode();
   bool autoSave = true;
   String selectedChat = 'General';
   final List<String> groups = [];
@@ -478,15 +615,67 @@ class ChatScreenState extends State<ChatScreen> {
   bool isConnected = false;
   bool manualLogout = false;
   final ScrollController messageScrollController = ScrollController();
+  static const List<String> emojiPalette = [
+    '😀',
+    '😁',
+    '😂',
+    '🤣',
+    '😊',
+    '😍',
+    '😘',
+    '😎',
+    '🤩',
+    '🥳',
+    '😇',
+    '🙂',
+    '🙃',
+    '😉',
+    '😋',
+    '🤔',
+    '😴',
+    '😢',
+    '😭',
+    '😡',
+    '🤯',
+    '😱',
+    '👍',
+    '👎',
+    '👏',
+    '🙌',
+    '🙏',
+    '👀',
+    '💪',
+    '🔥',
+    '💯',
+    '❤️',
+    '💙',
+    '💚',
+    '💛',
+    '💜',
+    '🧡',
+    '🤍',
+    '🤎',
+    '🖤',
+    '✨',
+    '⭐',
+    '🎉',
+    '🎯',
+    '💬',
+    '🤝',
+    '🚀',
+    '☕',
+    '🍕',
+    '🌈',
+  ];
 
   @override
   void initState() {
     super.initState();
-      Future.delayed(const Duration(milliseconds: 100), () {
-        setWindowMinSize(const Size(700, 800));
-        setWindowMaxSize(Size.infinite);
-        setWindowFrame(const Rect.fromLTWH(100, 100, 700, 800));
-      });
+    Future.delayed(const Duration(milliseconds: 100), () {
+      setWindowMinSize(const Size(700, 800));
+      setWindowMaxSize(Size.infinite);
+      setWindowFrame(const Rect.fromLTWH(100, 100, 700, 800));
+    });
     if (widget.channel == null) {
       connectToServer();
     } else {
@@ -494,7 +683,9 @@ class ChatScreenState extends State<ChatScreen> {
       // Prefer an incomingStream provided by the login flow (already broadcast),
       // otherwise make a broadcast view of the channel stream.
       final incoming = widget.incomingStream ?? channel.stream;
-      final listenStream = incoming.isBroadcast ? incoming : incoming.asBroadcastStream();
+      final listenStream = incoming.isBroadcast
+          ? incoming
+          : incoming.asBroadcastStream();
       try {
         listenStream.listen(
           (message) {
@@ -514,8 +705,20 @@ class ChatScreenState extends State<ChatScreen> {
           },
         );
       } on StateError catch (e) {
-        debugPrint('Nu se poate asculta stream-ul WebSocket (este deja ascultat): $e');
+        debugPrint(
+          'Nu se poate asculta stream-ul WebSocket (este deja ascultat): $e',
+        );
       }
+    }
+    try {
+      channel.sink.add(
+        jsonEncode({'type': 'request_user_list', 'username': widget.username}),
+      );
+      channel.sink.add(
+        jsonEncode({'type': 'request_history', 'username': widget.username}),
+      );
+    } catch (e) {
+      debugPrint('request_history/request_user_list send failed: $e');
     }
   }
 
@@ -525,7 +728,9 @@ class ChatScreenState extends State<ChatScreen> {
       // Use a broadcast stream to avoid duplicate-listen StateError when someone else
       // (e.g., a parent) also listened to the same WebSocket stream.
       final incoming = channel.stream;
-      final listenStream = incoming.isBroadcast ? incoming : incoming.asBroadcastStream();
+      final listenStream = incoming.isBroadcast
+          ? incoming
+          : incoming.asBroadcastStream();
       try {
         listenStream.listen(
           (message) {
@@ -547,16 +752,18 @@ class ChatScreenState extends State<ChatScreen> {
           },
         );
       } on StateError catch (e) {
-        debugPrint('Nu se poate asculta stream-ul WebSocket (este deja ascultat): $e');
+        debugPrint(
+          'Nu se poate asculta stream-ul WebSocket (este deja ascultat): $e',
+        );
       }
 
       channel.sink.add(
         jsonEncode({'type': 'auth', 'username': widget.username}),
       );
-      } catch (e) {
-        debugPrint('Eroare la conectare: $e');
-        handleDisconnect();
-      }
+    } catch (e) {
+      debugPrint('Eroare la conectare: $e');
+      handleDisconnect();
+    }
   }
 
   void startKeepAlive() {
@@ -565,7 +772,9 @@ class ChatScreenState extends State<ChatScreen> {
       keepAliveTimer = Timer.periodic(keepAliveInterval, (_) {
         try {
           if (isConnected) {
-            channel.sink.add(jsonEncode({'type': 'ping', 'username': widget.username}));
+            channel.sink.add(
+              jsonEncode({'type': 'ping', 'username': widget.username}),
+            );
           }
         } catch (e) {
           debugPrint('Eroare la trimiterea ping-ului: $e');
@@ -585,15 +794,123 @@ class ChatScreenState extends State<ChatScreen> {
     keepAliveTimer = null;
   }
 
+  void applyHistoryPayload(Map<String, dynamic> data) {
+    final restoredMessages = <ChatMessage>[];
+    final rawMessages = data['messages'];
+    if (rawMessages is List) {
+      for (final entry in rawMessages) {
+        if (entry is! Map) continue;
+        final map = Map<String, dynamic>.from(entry);
+        final username = (map['username'] ?? '').toString();
+        final text = (map['message'] ?? '').toString();
+        if (username.isEmpty || text.isEmpty) continue;
+
+        final timestampRaw = (map['timestamp'] ?? '').toString();
+        DateTime parsedTime;
+        try {
+          parsedTime = DateTime.parse(timestampRaw);
+        } catch (_) {
+          parsedTime = DateTime.now();
+        }
+
+        final isPrivate = map['is_private'] == true;
+        final groupValue = map['group']?.toString();
+        final targetValue = map['target']?.toString();
+
+        restoredMessages.add(
+          ChatMessage(
+            username: username,
+            message: text,
+            timestamp: parsedTime,
+            isPrivate: isPrivate,
+            group: (groupValue == null || groupValue.isEmpty)
+                ? null
+                : groupValue,
+            target: (targetValue == null || targetValue.isEmpty)
+                ? null
+                : targetValue,
+          ),
+        );
+      }
+    }
+
+    final serverGroups = <String>{'General'};
+    final rawGroups = data['groups'];
+    if (rawGroups is List) {
+      for (final group in rawGroups) {
+        final name = group.toString().trim();
+        if (name.isNotEmpty) {
+          serverGroups.add(name);
+        }
+      }
+    }
+
+    final creatorsRaw = data['group_creators'];
+    final membersRaw = data['group_members'];
+
+    messages
+      ..clear()
+      ..addAll(restoredMessages);
+
+    groups
+      ..clear()
+      ..addAll(serverGroups.where((group) => group != 'General'));
+
+    myGroups
+      ..clear()
+      ..addAll(serverGroups);
+
+    groupCreators.clear();
+    if (creatorsRaw is Map) {
+      creatorsRaw.forEach((key, value) {
+        final group = key.toString();
+        final creator = value.toString();
+        if (group.isNotEmpty) {
+          groupCreators[group] = creator;
+        }
+      });
+    }
+
+    groupMembers.clear();
+    if (membersRaw is Map) {
+      membersRaw.forEach((key, value) {
+        final group = key.toString();
+        final members = <String>{};
+        if (value is List) {
+          for (final member in value) {
+            final name = member.toString().trim();
+            if (name.isNotEmpty) {
+              members.add(name);
+            }
+          }
+        }
+        if (group.isNotEmpty) {
+          groupMembers[group] = members;
+        }
+      });
+    }
+
+    if (!myGroups.contains(selectedChat) &&
+        selectedChat != 'General' &&
+        !users.contains(selectedChat)) {
+      selectedChat = 'General';
+    }
+  }
+
   void handleServerMessage(Map<String, dynamic> data) {
     if (!mounted) return;
 
     try {
       final wasNearBottom = messageScrollController.hasClients
-          ? (messageScrollController.position.maxScrollExtent - messageScrollController.offset <= 100)
+          ? (messageScrollController.position.maxScrollExtent -
+                    messageScrollController.offset <=
+                100)
           : true;
       setState(() {
         switch (data['type'] as String) {
+          case 'history':
+            applyHistoryPayload(data);
+            break;
           case 'user_list':
             // Debug: log received user list
             final received = (data['users'] as List).cast<String>();
@@ -618,7 +935,14 @@ class ChatScreenState extends State<ChatScreen> {
               group: 'General',
             );
             // avoid duplicating optimistic local messages echoed back from server
-            if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+            if (!(messages.isNotEmpty &&
+                messages.last.username == msg.username &&
+                messages.last.message == msg.message &&
+                msg.timestamp
+                        .difference(messages.last.timestamp)
+                        .inSeconds
+                        .abs() <
+                    5)) {
               messages.add(msg);
             }
             if (selectedChat != 'General') {
@@ -630,7 +954,8 @@ class ChatScreenState extends State<ChatScreen> {
             final target = data['target'] as String;
             final messageText = data['message'] as String;
             // Handle system removal notification delivered as a private message
-            if (target == widget.username && messageText.startsWith('__REMOVED_FROM_GROUP::')) {
+            if (target == widget.username &&
+                messageText.startsWith('__REMOVED_FROM_GROUP::')) {
               final parts = messageText.split('::');
               final removedGroup = parts.length > 1 ? parts[1] : '';
               // perform local cleanup for removed user
@@ -642,10 +967,16 @@ class ChatScreenState extends State<ChatScreen> {
               drafts.remove(removedGroup);
               if (selectedChat == removedGroup) {
                 // notify user and switch away
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ai fost eliminat din grupul $removedGroup')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Ai fost eliminat din grupul $removedGroup'),
+                  ),
+                );
                 changeChat('General');
               }
-            } else if (target == widget.username && messageText.startsWith('DELETED_GROUP::')) {
+            } else if (target == widget.username &&
+                (messageText.startsWith('DELETED_GROUP::') ||
+                    messageText.startsWith('__DELETED_GROUP::'))) {
               final parts = messageText.split('::');
               final deletedGroup = parts.length > 1 ? parts[1] : '';
               groupMembers.remove(deletedGroup);
@@ -655,7 +986,9 @@ class ChatScreenState extends State<ChatScreen> {
               pinnedChats.remove(deletedGroup);
               drafts.remove(deletedGroup);
               messages.removeWhere((m) => m.group == deletedGroup);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $deletedGroup a fost șters')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Grupul $deletedGroup a fost șters')),
+              );
               if (selectedChat == deletedGroup) changeChat('General');
             } else {
               final msg = ChatMessage(
@@ -665,7 +998,14 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: true,
                 target: target,
               );
-              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+              if (!(messages.isNotEmpty &&
+                  messages.last.username == msg.username &&
+                  messages.last.message == msg.message &&
+                  msg.timestamp
+                          .difference(messages.last.timestamp)
+                          .inSeconds
+                          .abs() <
+                      5)) {
                 messages.add(msg);
               }
               if (selectedChat != sender && target == widget.username) {
@@ -684,7 +1024,14 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: false,
                 group: group,
               );
-              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+              if (!(messages.isNotEmpty &&
+                  messages.last.username == msg.username &&
+                  messages.last.message == msg.message &&
+                  msg.timestamp
+                          .difference(messages.last.timestamp)
+                          .inSeconds
+                          .abs() <
+                      5)) {
                 messages.add(msg);
               }
               if (selectedChat != group) {
@@ -709,7 +1056,9 @@ class ChatScreenState extends State<ChatScreen> {
             break;
           case 'added_to_group':
             final groupName = data['group_name'] as String;
-            final member = data.containsKey('member') ? data['member'] as String : null;
+            final member = data.containsKey('member')
+                ? data['member'] as String
+                : null;
             groupMembers.putIfAbsent(groupName, () => <String>{});
             if (member != null) {
               groupMembers[groupName]!.add(member);
@@ -726,7 +1075,9 @@ class ChatScreenState extends State<ChatScreen> {
             break;
           case 'removed_from_group':
             final groupName = data['group_name'] as String;
-            final member = data.containsKey('member') ? data['member'] as String : null;
+            final member = data.containsKey('member')
+                ? data['member'] as String
+                : null;
             if (member != null) {
               groupMembers.putIfAbsent(groupName, () => <String>{});
               groupMembers[groupName]!.remove(member);
@@ -746,17 +1097,17 @@ class ChatScreenState extends State<ChatScreen> {
             messages.removeWhere((m) => m.group == groupName);
             break;
         }
-        });
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!messageScrollController.hasClients) return;
-          if (wasNearBottom) {
-            messageScrollController.animateTo(
-              messageScrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-            );
-          }
-        });
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!messageScrollController.hasClients) return;
+        if (wasNearBottom) {
+          messageScrollController.animateTo(
+            messageScrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
     } catch (e) {
       debugPrint('Eroare la procesarea mesajului: $e');
     }
@@ -779,7 +1130,9 @@ class ChatScreenState extends State<ChatScreen> {
       final members = groupMembers[newChat];
       if (members != null && !members.contains(widget.username)) {
         // user no longer a member
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nu mai faci parte din grupul $newChat')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Nu mai faci parte din grupul $newChat')),
+        );
         // cleanup local state
         setState(() {
           myGroups.remove(newChat);
@@ -841,11 +1194,70 @@ class ChatScreenState extends State<ChatScreen> {
     typingTimer = Timer(const Duration(seconds: 2), () {
       sendTypingIndicator(false);
     });
-    
+
     // Auto-save draft continuously
     drafts[selectedChat] = text;
   }
 
+  Future<void> showEmojiPicker() async {
+    final selectedEmoji = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: GridView.builder(
+            shrinkWrap: true,
+            itemCount: emojiPalette.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 8,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+            ),
+            itemBuilder: (context, index) {
+              final emoji = emojiPalette[index];
+              return InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => Navigator.pop(context, emoji),
+                child: Center(
+                  child: Text(emoji, style: const TextStyle(fontSize: 24)),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    if (selectedEmoji != null && mounted) {
+      insertAtCursor(selectedEmoji);
+      messageFocusNode.requestFocus();
+    }
+  }
+
+  void insertAtCursor(String value) {
+    final currentText = messageController.text;
+    final selection = messageController.selection;
+    final start = selection.isValid ? selection.start : currentText.length;
+    final end = selection.isValid ? selection.end : currentText.length;
+    final safeStart = start < 0 ? currentText.length : start;
+    final safeEnd = end < 0 ? currentText.length : end;
+    final newText = currentText.replaceRange(safeStart, safeEnd, value);
+
+    messageController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: safeStart + value.length),
+    );
+    onTextChanged(newText);
+  }
+
+  Future<void> copyMessageText(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Mesaj copiat')));
+  }
 
   @override
   void dispose() {
@@ -858,6 +1270,7 @@ class ChatScreenState extends State<ChatScreen> {
       debugPrint('Chat.dispose: error closing channel: $e');
     }
     messageController.dispose();
+    messageFocusNode.dispose();
     messageScrollController.dispose();
     typingTimer?.cancel();
     super.dispose();
@@ -881,32 +1294,29 @@ class ChatScreenState extends State<ChatScreen> {
                     ),
                   )
                 : null,
-            title: Text(selectedChat == 'General' ? 'Chat General' : selectedChat),
+            title: Text(
+              selectedChat == 'General' ? 'Chat General' : selectedChat,
+            ),
             actions: [
-              if (typingUsers.containsKey(selectedChat) && typingUsers[selectedChat]!)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: TypingIndicator(),
-                  ),
-              if (myGroups.contains(selectedChat) && groupCreators.containsKey(selectedChat) && groupCreators[selectedChat] == widget.username)
+              if (typingUsers.containsKey(selectedChat) &&
+                  typingUsers[selectedChat]!)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: TypingIndicator(),
+                ),
+              if (myGroups.contains(selectedChat) &&
+                  groupCreators.containsKey(selectedChat) &&
+                  groupCreators[selectedChat] == widget.username)
                 IconButton(
                   icon: const Icon(Icons.settings),
                   onPressed: () => showGroupSettings(selectedChat),
                 ),
             ],
           ),
-          drawer: !isWide
-              ? Drawer(
-                  child: _buildSidebar(context),
-                )
-              : null,
+          drawer: !isWide ? Drawer(child: _buildSidebar(context)) : null,
           body: Row(
             children: [
-              if (isWide)
-                SizedBox(
-                  width: 260,
-                  child: _buildSidebar(context),
-                ),
+              if (isWide) SizedBox(width: 260, child: _buildSidebar(context)),
               Expanded(
                 child: Column(
                   children: [
@@ -918,13 +1328,19 @@ class ChatScreenState extends State<ChatScreen> {
                             // Filtrare mesaje relevante pentru chatul selectat
                             final filteredMessages = messages.where((msg) {
                               if (selectedChat == 'General') {
-                                return !msg.isPrivate && (msg.group == null || msg.group == 'General');
+                                return !msg.isPrivate &&
+                                    (msg.group == null ||
+                                        msg.group == 'General');
                               } else if (users.contains(selectedChat)) {
                                 if (!msg.isPrivate) return false;
-                                final otherUser = msg.username == widget.username ? msg.target : msg.username;
+                                final otherUser =
+                                    msg.username == widget.username
+                                    ? msg.target
+                                    : msg.username;
                                 return otherUser == selectedChat;
                               } else if (myGroups.contains(selectedChat)) {
-                                return msg.group == selectedChat && !msg.isPrivate;
+                                return msg.group == selectedChat &&
+                                    !msg.isPrivate;
                               }
                               return false;
                             }).toList();
@@ -932,7 +1348,10 @@ class ChatScreenState extends State<ChatScreen> {
                               return Center(
                                 child: Text(
                                   'Niciun mesaj în acest chat încă.',
-                                  style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                                  style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 16,
+                                  ),
                                 ),
                               );
                             }
@@ -958,11 +1377,21 @@ class ChatScreenState extends State<ChatScreen> {
                           Expanded(
                             child: TextField(
                               controller: messageController,
+                              focusNode: messageFocusNode,
+                              minLines: 1,
+                              maxLines: 4,
                               onChanged: onTextChanged,
                               decoration: InputDecoration(
                                 hintText: getHintText(),
                                 filled: true,
                                 fillColor: Colors.white,
+                                prefixIcon: IconButton(
+                                  tooltip: 'Emoji',
+                                  onPressed: showEmojiPicker,
+                                  icon: const Icon(
+                                    Icons.emoji_emotions_outlined,
+                                  ),
+                                ),
                               ),
                               onSubmitted: (_) => sendMessage(),
                             ),
@@ -972,7 +1401,12 @@ class ChatScreenState extends State<ChatScreen> {
                             onPressed: sendMessage,
                             icon: const Icon(Icons.send),
                             style: IconButton.styleFrom(
-                              backgroundColor: const Color.fromARGB(255, 201, 173, 167),
+                              backgroundColor: const Color.fromARGB(
+                                255,
+                                201,
+                                173,
+                                167,
+                              ),
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.all(12),
                             ),
@@ -1044,8 +1478,12 @@ class ChatScreenState extends State<ChatScreen> {
               leading: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  const Icon(Icons.group, color: Color.fromARGB(255, 103, 80, 164)),
-                  if (unreadCounts.containsKey(group) && unreadCounts[group]! > 0)
+                  const Icon(
+                    Icons.group,
+                    color: Color.fromARGB(255, 103, 80, 164),
+                  ),
+                  if (unreadCounts.containsKey(group) &&
+                      unreadCounts[group]! > 0)
                     Positioned(
                       top: -6,
                       right: -6,
@@ -1055,11 +1493,16 @@ class ChatScreenState extends State<ChatScreen> {
                         decoration: BoxDecoration(
                           color: Colors.red,
                           shape: BoxShape.circle,
-                          border: Border.all(color: const Color.fromARGB(255, 201, 173, 167), width: 2),
+                          border: Border.all(
+                            color: const Color.fromARGB(255, 201, 173, 167),
+                            width: 2,
+                          ),
                         ),
                         child: Center(
                           child: Text(
-                            unreadCounts[group]! > 99 ? '99+' : '${unreadCounts[group]}',
+                            unreadCounts[group]! > 99
+                                ? '99+'
+                                : '${unreadCounts[group]}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
@@ -1079,16 +1522,21 @@ class ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               selected: selectedChat == group,
-                  selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
+              selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
               onTap: () => changeChat(group),
               trailing: group != 'General'
                   ? Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
+                        if (drafts.containsKey(group) &&
+                            drafts[group]!.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(right: 4),
-                            child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                            child: Icon(
+                              Icons.edit_note,
+                              size: 14,
+                              color: Color.fromARGB(255, 103, 80, 164),
+                            ),
                           )
                         else
                           const SizedBox(width: 18),
@@ -1108,10 +1556,15 @@ class ChatScreenState extends State<ChatScreen> {
                   : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
+                        if (drafts.containsKey(group) &&
+                            drafts[group]!.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(right: 4),
-                            child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                            child: Icon(
+                              Icons.edit_note,
+                              size: 14,
+                              color: Color.fromARGB(255, 103, 80, 164),
+                            ),
                           )
                         else
                           const SizedBox(width: 18),
@@ -1129,7 +1582,10 @@ class ChatScreenState extends State<ChatScreen> {
             ),
           ),
           ListTile(
-            leading: const Icon(Icons.add, color: Color.fromARGB(255, 103, 80, 164)),
+            leading: const Icon(
+              Icons.add,
+              color: Color.fromARGB(255, 103, 80, 164),
+            ),
             title: Text(
               'Creează grup',
               style: const TextStyle(
@@ -1178,7 +1634,9 @@ class ChatScreenState extends State<ChatScreen> {
                         ),
                         child: Center(
                           child: Text(
-                            unreadCounts[user]! > 99 ? '99+' : '${unreadCounts[user]}',
+                            unreadCounts[user]! > 99
+                                ? '99+'
+                                : '${unreadCounts[user]}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
@@ -1190,12 +1648,9 @@ class ChatScreenState extends State<ChatScreen> {
                     ),
                 ],
               ),
-              title: Text(
-                user,
-                style: const TextStyle(color: Colors.white),
-              ),
+              title: Text(user, style: const TextStyle(color: Colors.white)),
               selected: selectedChat == user,
-                  selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
+              selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
               onTap: () => changeChat(user),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1203,7 +1658,11 @@ class ChatScreenState extends State<ChatScreen> {
                   if (drafts.containsKey(user) && drafts[user]!.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
-                      child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                      child: Icon(
+                        Icons.edit_note,
+                        size: 14,
+                        color: Color.fromARGB(255, 103, 80, 164),
+                      ),
                     )
                   else
                     const SizedBox(width: 18),
@@ -1238,45 +1697,69 @@ class ChatScreenState extends State<ChatScreen> {
   Widget buildMessageBubble(ChatMessage msg, bool isMe) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        constraints: const BoxConstraints(maxWidth: 280),
-        decoration: BoxDecoration(
-          color: isMe
-              ? const Color.fromARGB(255, 201, 173, 167)
-              : const Color.fromARGB(255, 242, 233, 228),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              msg.isPrivate
-                  ? (isMe
-                        ? 'Către: ${msg.target ?? "Necunoscut"}'
-                        : 'De la: ${msg.username}')
-                  : 'De la: ${msg.username}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-                color: isMe ? Colors.white : Colors.grey[700],
+      child: GestureDetector(
+        onLongPress: () => copyMessageText(msg.message),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          constraints: const BoxConstraints(maxWidth: 280),
+          decoration: BoxDecoration(
+            color: isMe
+                ? const Color.fromARGB(255, 201, 173, 167)
+                : const Color.fromARGB(255, 242, 233, 228),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(20),
+              topRight: const Radius.circular(20),
+              bottomLeft: Radius.circular(isMe ? 20 : 6),
+              bottomRight: Radius.circular(isMe ? 6 : 20),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                msg.isPrivate
+                    ? (isMe
+                          ? 'Către: ${msg.target ?? "Necunoscut"}'
+                          : 'De la: ${msg.username}')
+                    : 'De la: ${msg.username}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: isMe ? Colors.white : Colors.grey[700],
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              msg.message,
-              style: TextStyle(color: isMe ? Colors.white : Colors.black87),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              formatTime(msg.timestamp),
-              style: TextStyle(
-                fontSize: 10,
-                color: isMe ? Colors.white70 : Colors.grey,
+              const SizedBox(height: 4),
+              Text(
+                msg.message,
+                style: TextStyle(color: isMe ? Colors.white : Colors.black87),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      formatTime(msg.timestamp),
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: isMe ? Colors.white70 : Colors.grey,
+                      ),
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.done_all,
+                        size: 12,
+                        color: Colors.white70,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1315,7 +1798,9 @@ class ChatScreenState extends State<ChatScreen> {
     manualLogout = true;
     try {
       // Inform server about logout if possible
-      channel.sink.add(jsonEncode({'type': 'logout', 'username': widget.username}));
+      channel.sink.add(
+        jsonEncode({'type': 'logout', 'username': widget.username}),
+      );
     } catch (e) {
       // ignore send errors
     }
@@ -1385,7 +1870,10 @@ class TypingIndicatorState extends State<TypingIndicator>
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Text('scrie', style: TextStyle(color: Colors.white, fontSize: 12)),
+        const Text(
+          'scrie',
+          style: TextStyle(color: Colors.white, fontSize: 12),
+        ),
         const SizedBox(width: 4),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -1395,7 +1883,10 @@ class TypingIndicatorState extends State<TypingIndicator>
               duration: const Duration(milliseconds: 200),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 1),
-                child: Text('.', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                child: Text(
+                  '.',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
               ),
             );
           }).toList(),

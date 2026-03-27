@@ -1,17 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
 import 'chat.dart';
-import 'register.dart' show RegisterScreen;
-import 'dart:convert';
-import 'dart:async';
-
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
-
-  @override
-  State<LoginScreen> createState() => _LoginScreenState();
-}
 
 const host = String.fromEnvironment(
   'CHAT_WS_HOST',
@@ -24,9 +18,17 @@ const googleWebClientId = String.fromEnvironment(
 );
 const authResponseTimeout = Duration(seconds: 20);
 
-class _LoginScreenState extends State<LoginScreen> {
+class RegisterScreen extends StatefulWidget {
+  const RegisterScreen({super.key});
+
+  @override
+  State<RegisterScreen> createState() => _RegisterScreenState();
+}
+
+class _RegisterScreenState extends State<RegisterScreen> {
   late final TextEditingController usernameController;
   late final TextEditingController passwordController;
+  late final TextEditingController confirmPasswordController;
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: ['email', 'profile'],
     serverClientId: googleWebClientId.isEmpty ? null : googleWebClientId,
@@ -39,18 +41,20 @@ class _LoginScreenState extends State<LoginScreen> {
     super.initState();
     usernameController = TextEditingController();
     passwordController = TextEditingController();
+    confirmPasswordController = TextEditingController();
   }
 
   @override
   void dispose() {
     usernameController.dispose();
     passwordController.dispose();
+    confirmPasswordController.dispose();
     super.dispose();
   }
 
   void _showError(String message) {
     final stamp = DateTime.now().toIso8601String();
-    debugPrint('[LOGIN_ERROR][$stamp] $message');
+    debugPrint('[REGISTER_ERROR][$stamp] $message');
     if (!mounted) return;
     setState(() {
       _lastError = '[$stamp] $message';
@@ -76,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
     required String usernameHint,
   }) async {
     debugPrint(
-      '[LOGIN_FLOW] start auth type=${authPayload['type']} host=$host',
+      '[REGISTER_FLOW] start auth type=${authPayload['type']} host=$host usernameHint=$usernameHint',
     );
     try {
       final channel = WebSocketChannel.connect(Uri.parse(host));
@@ -103,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
       debugPrint(
-        '[LOGIN_FLOW] server response type=${resp['type']} message=${resp['message']}',
+        '[REGISTER_FLOW] server response type=${resp['type']} message=${resp['message']}',
       );
       if (resp['type'] == 'auth_success') {
         final responseUsername = (resp['username'] as String?)?.trim();
@@ -195,6 +199,31 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _register() async {
+    final username = usernameController.text.trim();
+    final password = passwordController.text.trim();
+    final confirmPassword = confirmPasswordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
+      _showError('Completează toate câmpurile.');
+      return;
+    }
+    if (password != confirmPassword) {
+      _showError('Parolele nu coincid.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    await _authenticateWithPayload({
+      'type': 'register',
+      'username': username,
+      'password': password,
+    }, usernameHint: username);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -204,16 +233,15 @@ class _LoginScreenState extends State<LoginScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(20),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Icon(
-                  Icons.chat_bubble,
-                  size: 80,
+                  Icons.person_add_alt_1,
+                  size: 78,
                   color: Color.fromARGB(255, 201, 173, 167),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 const Text(
-                  'Chat Social',
+                  'Creează cont',
                   style: TextStyle(
                     fontFamily: 'Arial',
                     fontSize: 32,
@@ -221,12 +249,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     color: Colors.black,
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 const Text(
-                  'Bine ați venit',
+                  'Înregistrare Chat Social',
                   style: TextStyle(fontSize: 16, color: Colors.grey),
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 30),
                 TextField(
                   controller: usernameController,
                   decoration: InputDecoration(
@@ -244,38 +272,24 @@ class _LoginScreenState extends State<LoginScreen> {
                     color: Color.fromARGB(255, 26, 27, 37),
                   ),
                 ),
-                const SizedBox(height: 15),
-                SizedBox(
-                  height: 60,
-                  child: PasswordField(controller: passwordController),
+                const SizedBox(height: 12),
+                RegisterPasswordField(
+                  controller: passwordController,
+                  hintText: 'Parolă',
                 ),
-                const SizedBox(height: 30),
+                const SizedBox(height: 12),
+                RegisterPasswordField(
+                  controller: confirmPasswordController,
+                  hintText: 'Confirmă parola',
+                ),
+                const SizedBox(height: 22),
                 SizedBox(
                   width: double.infinity,
                   height: 50,
                   child: _isLoading
                       ? const Center(child: CircularProgressIndicator())
                       : ElevatedButton(
-                          onPressed: () async {
-                            final username = usernameController.text.trim();
-                            final password = passwordController.text.trim();
-
-                            if (username.isEmpty || password.isEmpty) {
-                              _showError(
-                                'Vă rugăm să introduceți username și parola',
-                              );
-                              return;
-                            }
-
-                            setState(() {
-                              _isLoading = true;
-                            });
-                            await _authenticateWithPayload({
-                              'type': 'auth',
-                              'username': username,
-                              'password': password,
-                            }, usernameHint: username);
-                          },
+                          onPressed: _register,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color.fromARGB(
                               255,
@@ -295,7 +309,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             elevation: 2,
                           ),
                           child: const Text(
-                            'Autentificare',
+                            'Creează cont',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -329,19 +343,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 14),
                 TextButton(
-                  onPressed: _isLoading
-                      ? null
-                      : () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const RegisterScreen(),
-                            ),
-                          );
-                        },
-                  child: const Text('Nu ai cont? Creează unul acum'),
+                  onPressed: _isLoading ? null : () => Navigator.pop(context),
+                  child: const Text('Ai deja cont? Înapoi la login'),
                 ),
                 if (_lastError != null) ...[
                   const SizedBox(height: 10),
@@ -362,11 +367,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 20),
-                Text(
-                  'Server: $host',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
               ],
             ),
           ),
@@ -376,16 +376,21 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class PasswordField extends StatefulWidget {
+class RegisterPasswordField extends StatefulWidget {
   final TextEditingController controller;
+  final String hintText;
 
-  const PasswordField({super.key, required this.controller});
+  const RegisterPasswordField({
+    super.key,
+    required this.controller,
+    required this.hintText,
+  });
 
   @override
-  PasswordFieldState createState() => PasswordFieldState();
+  State<RegisterPasswordField> createState() => _RegisterPasswordFieldState();
 }
 
-class PasswordFieldState extends State<PasswordField> {
+class _RegisterPasswordFieldState extends State<RegisterPasswordField> {
   bool _isObscured = true;
 
   @override
@@ -394,7 +399,7 @@ class PasswordFieldState extends State<PasswordField> {
       controller: widget.controller,
       obscureText: _isObscured,
       decoration: InputDecoration(
-        hintText: 'Parolă',
+        hintText: widget.hintText,
         filled: true,
         fillColor: const Color.fromARGB(255, 201, 173, 167),
         border: OutlineInputBorder(

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'login.dart';
 
@@ -9,19 +11,28 @@ class ChatScreen extends StatefulWidget {
   final WebSocketChannel? channel;
   final Stream<dynamic>? incomingStream;
 
-  const ChatScreen({super.key, required this.username, this.channel, this.incomingStream});
+  const ChatScreen({
+    super.key,
+    required this.username,
+    this.channel,
+    this.incomingStream,
+  });
 
   @override
   State<ChatScreen> createState() => ChatScreenState();
 }
 
-const host = 'wss://chat-social-ng2d.onrender.com/ws';
+const host = String.fromEnvironment(
+  'CHAT_WS_HOST',
+  defaultValue: 'ws://192.168.0.117:10000/ws',
+);
 
 class ChatScreenState extends State<ChatScreen> {
   late WebSocketChannel channel;
   final List<String> users = [];
   final List<ChatMessage> messages = [];
   final TextEditingController messageController = TextEditingController();
+  final FocusNode messageFocusNode = FocusNode();
   String selectedChat = 'General';
   final List<String> groups = [];
   final Set<String> myGroups = {'General'};
@@ -48,7 +59,11 @@ class ChatScreenState extends State<ChatScreen> {
       connectToServer();
     } else {
       channel = widget.channel!;
-      final incoming = widget.incomingStream ?? (channel.stream.isBroadcast ? channel.stream : channel.stream.asBroadcastStream());
+      final incoming =
+          widget.incomingStream ??
+          (channel.stream.isBroadcast
+              ? channel.stream
+              : channel.stream.asBroadcastStream());
       incoming.listen(
         (message) {
           setState(() {
@@ -65,12 +80,120 @@ class ChatScreenState extends State<ChatScreen> {
         },
       );
     }
-      // Ask server for a fresh user list in case it was sent before this listener started
-      try {
-        channel.sink.add(jsonEncode({'type': 'request_user_list', 'username': widget.username}));
-      } catch (e) {
-        // ignore
+    // Ask server for a fresh user list in case it was sent before this listener started
+    try {
+      channel.sink.add(
+        jsonEncode({'type': 'request_user_list', 'username': widget.username}),
+      );
+      channel.sink.add(
+        jsonEncode({'type': 'request_history', 'username': widget.username}),
+      );
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  void applyHistoryPayload(Map<String, dynamic> data) {
+    final restoredMessages = <ChatMessage>[];
+    final rawMessages = data['messages'];
+    if (rawMessages is List) {
+      for (final entry in rawMessages) {
+        if (entry is! Map) continue;
+        final map = Map<String, dynamic>.from(entry);
+        final username = (map['username'] ?? '').toString();
+        final text = (map['message'] ?? '').toString();
+        if (username.isEmpty || text.isEmpty) continue;
+
+        final timestampRaw = (map['timestamp'] ?? '').toString();
+        DateTime parsedTime;
+        try {
+          parsedTime = DateTime.parse(timestampRaw);
+        } catch (_) {
+          parsedTime = DateTime.now();
+        }
+
+        final isPrivate = map['is_private'] == true;
+        final groupValue = map['group']?.toString();
+        final targetValue = map['target']?.toString();
+
+        restoredMessages.add(
+          ChatMessage(
+            username: username,
+            message: text,
+            timestamp: parsedTime,
+            isPrivate: isPrivate,
+            group: (groupValue == null || groupValue.isEmpty)
+                ? null
+                : groupValue,
+            target: (targetValue == null || targetValue.isEmpty)
+                ? null
+                : targetValue,
+          ),
+        );
       }
+    }
+
+    final serverGroups = <String>{'General'};
+    final rawGroups = data['groups'];
+    if (rawGroups is List) {
+      for (final group in rawGroups) {
+        final name = group.toString().trim();
+        if (name.isNotEmpty) {
+          serverGroups.add(name);
+        }
+      }
+    }
+
+    final creatorsRaw = data['group_creators'];
+    final membersRaw = data['group_members'];
+
+    messages
+      ..clear()
+      ..addAll(restoredMessages);
+
+    groups
+      ..clear()
+      ..addAll(serverGroups.where((group) => group != 'General'));
+
+    myGroups
+      ..clear()
+      ..addAll(serverGroups);
+
+    groupCreators.clear();
+    if (creatorsRaw is Map) {
+      creatorsRaw.forEach((key, value) {
+        final group = key.toString();
+        final creator = value.toString();
+        if (group.isNotEmpty) {
+          groupCreators[group] = creator;
+        }
+      });
+    }
+
+    groupMembers.clear();
+    if (membersRaw is Map) {
+      membersRaw.forEach((key, value) {
+        final group = key.toString();
+        final members = <String>{};
+        if (value is List) {
+          for (final member in value) {
+            final name = member.toString().trim();
+            if (name.isNotEmpty) {
+              members.add(name);
+            }
+          }
+        }
+        if (group.isNotEmpty) {
+          groupMembers[group] = members;
+        }
+      });
+    }
+
+    if (!myGroups.contains(selectedChat) &&
+        selectedChat != 'General' &&
+        !users.contains(selectedChat)) {
+      selectedChat = 'General';
+    }
   }
 
   void connectToServer() {
@@ -107,10 +230,15 @@ class ChatScreenState extends State<ChatScreen> {
 
     try {
       final wasNearBottom = messageScrollController.hasClients
-          ? (messageScrollController.position.maxScrollExtent - messageScrollController.offset <= 100)
+          ? (messageScrollController.position.maxScrollExtent -
+                    messageScrollController.offset <=
+                100)
           : true;
       setState(() {
         switch (data['type'] as String) {
+          case 'history':
+            applyHistoryPayload(data);
+            break;
           case 'user_list':
             // Debug: log received user list
             final received = (data['users'] as List).cast<String>();
@@ -134,7 +262,14 @@ class ChatScreenState extends State<ChatScreen> {
               isPrivate: false,
               group: 'General',
             );
-            if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+            if (!(messages.isNotEmpty &&
+                messages.last.username == msg.username &&
+                messages.last.message == msg.message &&
+                msg.timestamp
+                        .difference(messages.last.timestamp)
+                        .inSeconds
+                        .abs() <
+                    5)) {
               messages.add(msg);
             }
             if (selectedChat != 'General') {
@@ -146,7 +281,8 @@ class ChatScreenState extends State<ChatScreen> {
             final target = data['target'] as String;
             final messageText = data['message'] as String;
             // handle system notifications sent via private messages
-            if (target == widget.username && messageText.startsWith('__REMOVED_FROM_GROUP::')) {
+            if (target == widget.username &&
+                messageText.startsWith('__REMOVED_FROM_GROUP::')) {
               final parts = messageText.split('::');
               final removedGroup = parts.length > 1 ? parts[1] : '';
               groupMembers.putIfAbsent(removedGroup, () => <String>{});
@@ -156,10 +292,15 @@ class ChatScreenState extends State<ChatScreen> {
               pinnedChats.remove(removedGroup);
               drafts.remove(removedGroup);
               if (selectedChat == removedGroup) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ai fost eliminat din grupul $removedGroup')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Ai fost eliminat din grupul $removedGroup'),
+                  ),
+                );
                 changeChat('General');
               }
-            } else if (target == widget.username && messageText.startsWith('__DELETED_GROUP::')) {
+            } else if (target == widget.username &&
+                messageText.startsWith('__DELETED_GROUP::')) {
               final parts = messageText.split('::');
               final deletedGroup = parts.length > 1 ? parts[1] : '';
               groupMembers.remove(deletedGroup);
@@ -169,7 +310,9 @@ class ChatScreenState extends State<ChatScreen> {
               pinnedChats.remove(deletedGroup);
               drafts.remove(deletedGroup);
               messages.removeWhere((m) => m.group == deletedGroup);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $deletedGroup a fost șters')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Grupul $deletedGroup a fost șters')),
+              );
               if (selectedChat == deletedGroup) changeChat('General');
             } else {
               final msg = ChatMessage(
@@ -179,7 +322,14 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: true,
                 target: target,
               );
-              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+              if (!(messages.isNotEmpty &&
+                  messages.last.username == msg.username &&
+                  messages.last.message == msg.message &&
+                  msg.timestamp
+                          .difference(messages.last.timestamp)
+                          .inSeconds
+                          .abs() <
+                      5)) {
                 messages.add(msg);
               }
               if (selectedChat != sender && target == widget.username) {
@@ -198,7 +348,14 @@ class ChatScreenState extends State<ChatScreen> {
                 isPrivate: false,
                 group: group,
               );
-              if (!(messages.isNotEmpty && messages.last.username == msg.username && messages.last.message == msg.message && msg.timestamp.difference(messages.last.timestamp).inSeconds.abs() < 5)) {
+              if (!(messages.isNotEmpty &&
+                  messages.last.username == msg.username &&
+                  messages.last.message == msg.message &&
+                  msg.timestamp
+                          .difference(messages.last.timestamp)
+                          .inSeconds
+                          .abs() <
+                      5)) {
                 messages.add(msg);
               }
               if (selectedChat != group) {
@@ -223,7 +380,9 @@ class ChatScreenState extends State<ChatScreen> {
             break;
           case 'added_to_group':
             final groupName = data['group_name'] as String;
-            final member = data.containsKey('member') ? data['member'] as String : null;
+            final member = data.containsKey('member')
+                ? data['member'] as String
+                : null;
             groupMembers.putIfAbsent(groupName, () => <String>{});
             if (member != null) {
               groupMembers[groupName]!.add(member);
@@ -238,7 +397,9 @@ class ChatScreenState extends State<ChatScreen> {
             break;
           case 'removed_from_group':
             final groupName = data['group_name'] as String;
-            final member = data.containsKey('member') ? data['member'] as String : null;
+            final member = data.containsKey('member')
+                ? data['member'] as String
+                : null;
             if (member != null) {
               groupMembers.putIfAbsent(groupName, () => <String>{});
               groupMembers[groupName]!.remove(member);
@@ -338,6 +499,41 @@ class ChatScreenState extends State<ChatScreen> {
     if (autoSave) drafts[selectedChat] = text;
   }
 
+  Future<void> showEmojiPicker() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+        return SafeArea(
+          child: SizedBox(
+            height: 360 + bottomInset,
+            child: EmojiPicker(
+              textEditingController: messageController,
+              onEmojiSelected: (category, emoji) {
+                onTextChanged(messageController.text);
+              },
+              onBackspacePressed: () {
+                onTextChanged(messageController.text);
+              },
+              config: const Config(height: 360),
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted) return;
+    messageFocusNode.requestFocus();
+  }
+
+  Future<void> copyMessageText(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Mesaj copiat')));
+  }
+
   List<String> getSortedUsers() {
     final sorted = List<String>.from(users);
     sorted.sort((a, b) {
@@ -431,7 +627,9 @@ class ChatScreenState extends State<ChatScreen> {
     String? target,
   ]) {
     final wasNearBottom = messageScrollController.hasClients
-        ? (messageScrollController.position.maxScrollExtent - messageScrollController.offset <= 100)
+        ? (messageScrollController.position.maxScrollExtent -
+                  messageScrollController.offset <=
+              100)
         : true;
     setState(() {
       messages.add(
@@ -553,7 +751,9 @@ class ChatScreenState extends State<ChatScreen> {
       keepAliveTimer = Timer.periodic(keepAliveInterval, (_) {
         try {
           if (isConnected) {
-            channel.sink.add(jsonEncode({'type': 'ping', 'username': widget.username}));
+            channel.sink.add(
+              jsonEncode({'type': 'ping', 'username': widget.username}),
+            );
           }
         } catch (e) {
           // ignore send errors
@@ -583,7 +783,9 @@ class ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
-          final availableToAdd = users.where((u) => !members.contains(u)).toList();
+          final availableToAdd = users
+              .where((u) => !members.contains(u))
+              .toList();
           final creator = groupCreators[groupName] ?? '';
           final removable = members.where((m) => m != creator).toList();
 
@@ -594,12 +796,15 @@ class ChatScreenState extends State<ChatScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (availableToAdd.isNotEmpty) ...[
-                    const Align(alignment: Alignment.centerLeft, child: Text('Adaugă utilizatori')),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Adaugă utilizatori'),
+                    ),
                     const SizedBox(height: 8),
                     SizedBox(
                       width: double.maxFinite,
                       child: Column(
-                          children: availableToAdd.map((u) {
+                        children: availableToAdd.map((u) {
                           return CheckboxListTile(
                             title: Text(u),
                             value: addSelection.contains(u),
@@ -622,24 +827,44 @@ class ChatScreenState extends State<ChatScreen> {
                           : () {
                               for (final u in addSelection) {
                                 try {
-                                  channel.sink.add(jsonEncode({'type': 'add_to_group', 'group_name': groupName, 'member': u}));
+                                  channel.sink.add(
+                                    jsonEncode({
+                                      'type': 'add_to_group',
+                                      'group_name': groupName,
+                                      'member': u,
+                                    }),
+                                  );
                                 } catch (e) {
                                   // ignore send errors
                                 }
-                                groupMembers.putIfAbsent(groupName, () => <String>{});
+                                groupMembers.putIfAbsent(
+                                  groupName,
+                                  () => <String>{},
+                                );
                                 groupMembers[groupName]!.add(u);
                               }
                               setState(() {});
-                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Am trimis invitații pentru ${addSelection.length} utilizatori')));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Am trimis invitații pentru ${addSelection.length} utilizatori',
+                                  ),
+                                ),
+                              );
                             },
                       child: const Text('Adaugă selectați'),
                     ),
                     const Divider(),
                   ],
-                  const Align(alignment: Alignment.centerLeft, child: Text('Elimină membri')),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Elimină membri'),
+                  ),
                   const SizedBox(height: 8),
                   if (removable.isEmpty)
-                    const Text('Nu există membri eliminabili (creatorul nu poate fi eliminat).')
+                    const Text(
+                      'Nu există membri eliminabili (creatorul nu poate fi eliminat).',
+                    )
                   else
                     SizedBox(
                       width: double.maxFinite,
@@ -662,68 +887,109 @@ class ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                    ),
                     onPressed: removeSelection.isEmpty
                         ? null
                         : () {
                             for (final m in removeSelection) {
                               try {
-                                channel.sink.add(jsonEncode({'type': 'remove_from_group', 'group_name': groupName, 'member': m}));
+                                channel.sink.add(
+                                  jsonEncode({
+                                    'type': 'remove_from_group',
+                                    'group_name': groupName,
+                                    'member': m,
+                                  }),
+                                );
                               } catch (e) {
                                 // ignore send errors
                               }
                               try {
-                                channel.sink.add(jsonEncode({
-                                  'type': 'private_message',
-                                  'username': widget.username,
-                                  'target': m,
-                                  'message': '__REMOVED_FROM_GROUP::$groupName',
-                                }));
+                                channel.sink.add(
+                                  jsonEncode({
+                                    'type': 'private_message',
+                                    'username': widget.username,
+                                    'target': m,
+                                    'message':
+                                        '__REMOVED_FROM_GROUP::$groupName',
+                                  }),
+                                );
                               } catch (e) {
                                 // ignore send errors
                               }
-                              groupMembers.putIfAbsent(groupName, () => <String>{});
+                              groupMembers.putIfAbsent(
+                                groupName,
+                                () => <String>{},
+                              );
                               groupMembers[groupName]!.remove(m);
-                              if (m == widget.username) myGroups.remove(groupName);
+                              if (m == widget.username) {
+                                myGroups.remove(groupName);
+                              }
                             }
                             setState(() {});
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Am eliminat ${removeSelection.length} membri')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Am eliminat ${removeSelection.length} membri',
+                                ),
+                              ),
+                            );
                           },
                     child: const Text('Elimină selectați'),
                   ),
                   const SizedBox(height: 12),
                   if (creator == widget.username)
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
                       onPressed: () async {
                         final confirm = await showDialog<bool>(
                           context: context,
                           builder: (c) => AlertDialog(
                             title: const Text('Șterge grup'),
-                            content: const Text('Ești sigur? Grupul va fi șters pentru toți membrii.'),
+                            content: const Text(
+                              'Ești sigur? Grupul va fi șters pentru toți membrii.',
+                            ),
                             actions: [
-                              TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Anulează')),
-                              TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('Șterge')),
+                              TextButton(
+                                onPressed: () => Navigator.of(c).pop(false),
+                                child: const Text('Anulează'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(c).pop(true),
+                                child: const Text('Șterge'),
+                              ),
                             ],
                           ),
                         );
-                              if (confirm == true) {
+                        if (confirm == true) {
                           try {
-                            final membersToNotify = List<String>.from(groupMembers[groupName] ?? <String>[]);
+                            final membersToNotify = List<String>.from(
+                              groupMembers[groupName] ?? <String>[],
+                            );
                             for (final m in membersToNotify) {
                               try {
-                                channel.sink.add(jsonEncode({
-                                  'type': 'private_message',
-                                  'username': widget.username,
-                                  'target': m,
-                                  'message': '__DELETED_GROUP::$groupName',
-                                }));
+                                channel.sink.add(
+                                  jsonEncode({
+                                    'type': 'private_message',
+                                    'username': widget.username,
+                                    'target': m,
+                                    'message': '__DELETED_GROUP::$groupName',
+                                  }),
+                                );
                               } catch (e) {
                                 // ignore send errors
                               }
                             }
                             try {
-                              channel.sink.add(jsonEncode({'type': 'delete_group', 'group_name': groupName}));
+                              channel.sink.add(
+                                jsonEncode({
+                                  'type': 'delete_group',
+                                  'group_name': groupName,
+                                }),
+                              );
                             } catch (e) {
                               // ignore send errors
                             }
@@ -743,7 +1009,13 @@ class ChatScreenState extends State<ChatScreen> {
                           if (!mounted) return;
                           WidgetsBinding.instance.addPostFrameCallback((_) {
                             Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Grupul $groupName a fost marcat pentru ștergere')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Grupul $groupName a fost marcat pentru ștergere',
+                                ),
+                              ),
+                            );
                           });
                         }
                       },
@@ -753,7 +1025,10 @@ class ChatScreenState extends State<ChatScreen> {
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Închide')),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Închide'),
+              ),
             ],
           );
         },
@@ -764,7 +1039,9 @@ class ChatScreenState extends State<ChatScreen> {
   void logout() {
     manualLogout = true;
     try {
-      channel.sink.add(jsonEncode({'type': 'logout', 'username': widget.username}));
+      channel.sink.add(
+        jsonEncode({'type': 'logout', 'username': widget.username}),
+      );
     } catch (e) {
       // ignore send errors
     }
@@ -796,6 +1073,7 @@ class ChatScreenState extends State<ChatScreen> {
       // ignore close errors
     }
     messageController.dispose();
+    messageFocusNode.dispose();
     messageScrollController.dispose();
     typingTimer?.cancel();
     super.dispose();
@@ -829,7 +1107,9 @@ class ChatScreenState extends State<ChatScreen> {
                 padding: const EdgeInsets.only(right: 10),
                 child: TypingIndicator(),
               ),
-            if (myGroups.contains(selectedChat) && groupCreators.containsKey(selectedChat) && groupCreators[selectedChat] == widget.username)
+            if (myGroups.contains(selectedChat) &&
+                groupCreators.containsKey(selectedChat) &&
+                groupCreators[selectedChat] == widget.username)
               IconButton(
                 icon: const Icon(Icons.settings, color: Colors.white),
                 onPressed: () => showGroupSettings(selectedChat),
@@ -843,39 +1123,46 @@ class ChatScreenState extends State<ChatScreen> {
           color: const Color.fromARGB(255, 201, 173, 167),
           child: ListView(
             children: [
-          // Compact header (match Windows): avatar + name inline, smaller height
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: const Color.fromARGB(255, 176, 148, 142),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: Colors.white,
-                  child: Text(
-                    widget.username[0].toUpperCase(),
-                    style: const TextStyle(
-                      color: Color.fromARGB(255, 201, 173, 167),
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+              // Compact header (match Windows): avatar + name inline, smaller height
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                color: const Color.fromARGB(255, 176, 148, 142),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: Colors.white,
+                      child: Text(
+                        widget.username[0].toUpperCase(),
+                        style: const TextStyle(
+                          color: Color.fromARGB(255, 201, 173, 167),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        widget.username,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.logout, color: Colors.white),
+                      onPressed: logout,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    widget.username,
-                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.white),
-                  onPressed: logout,
-                ),
-              ],
-            ),
-          ),
+              ),
               const Padding(
                 padding: EdgeInsets.all(8.0),
                 child: Text(
@@ -885,9 +1172,12 @@ class ChatScreenState extends State<ChatScreen> {
               ),
               ...getSortedGroups().map(
                 (group) => ListTile(
-                      leading: Stack(
+                  leading: Stack(
                     children: [
-                      const Icon(Icons.group, color: Color.fromARGB(255, 103, 80, 164)),
+                      const Icon(
+                        Icons.group,
+                        color: Color.fromARGB(255, 103, 80, 164),
+                      ),
                       if (unreadCounts.containsKey(group) &&
                           unreadCounts[group]! > 0)
                         Positioned(
@@ -918,7 +1208,9 @@ class ChatScreenState extends State<ChatScreen> {
                   ),
                   title: Text(
                     group,
-                    style: const TextStyle(color: Color.fromARGB(255, 103, 80, 164)),
+                    style: const TextStyle(
+                      color: Color.fromARGB(255, 103, 80, 164),
+                    ),
                   ),
                   selected: selectedChat == group,
                   selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
@@ -926,28 +1218,37 @@ class ChatScreenState extends State<ChatScreen> {
                   trailing: group != 'General'
                       ? Row(
                           mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (drafts.containsKey(group) && drafts[group]!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
-                          )
-                        else
-                          const SizedBox(width: 18),
-                        // Only show settings/pin; removing add-user icon (settings available to creators)
-                        IconButton(
-                          icon: Icon(
-                            pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
-                            color: const Color.fromARGB(255, 103, 80, 164),
-                          ),
-                          onPressed: () => togglePin(group),
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                    )
+                          children: [
+                            if (drafts.containsKey(group) &&
+                                drafts[group]!.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: Icon(
+                                  Icons.edit_note,
+                                  size: 14,
+                                  color: Color.fromARGB(255, 103, 80, 164),
+                                ),
+                              )
+                            else
+                              const SizedBox(width: 18),
+                            // Only show settings/pin; removing add-user icon (settings available to creators)
+                            IconButton(
+                              icon: Icon(
+                                pinnedChats.contains(group)
+                                    ? Icons.push_pin
+                                    : Icons.push_pin_outlined,
+                                color: const Color.fromARGB(255, 103, 80, 164),
+                              ),
+                              onPressed: () => togglePin(group),
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                        )
                       : IconButton(
                           icon: Icon(
-                            pinnedChats.contains(group) ? Icons.push_pin : Icons.push_pin_outlined,
+                            pinnedChats.contains(group)
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
                             color: const Color.fromARGB(255, 201, 173, 167),
                           ),
                           onPressed: () => togglePin(group),
@@ -955,7 +1256,10 @@ class ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               ListTile(
-                leading: const Icon(Icons.add, color: Color.fromARGB(255, 103, 80, 164)),
+                leading: const Icon(
+                  Icons.add,
+                  color: Color.fromARGB(255, 103, 80, 164),
+                ),
                 title: const Text(
                   'Creează grup',
                   style: TextStyle(color: Color.fromARGB(255, 103, 80, 164)),
@@ -973,7 +1277,7 @@ class ChatScreenState extends State<ChatScreen> {
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
-                  ...getSortedUsers().map(
+              ...getSortedUsers().map(
                 (user) => ListTile(
                   leading: Stack(
                     children: [
@@ -1020,7 +1324,7 @@ class ChatScreenState extends State<ChatScreen> {
                     style: const TextStyle(color: Colors.white),
                   ),
                   selected: selectedChat == user,
-                          selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
+                  selectedTileColor: Color.fromRGBO(255, 255, 255, 0.24),
                   onTap: () => changeChat(user),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1028,7 +1332,11 @@ class ChatScreenState extends State<ChatScreen> {
                       if (drafts.containsKey(user) && drafts[user]!.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(right: 4),
-                          child: Icon(Icons.edit_note, size: 14, color: Color.fromARGB(255, 103, 80, 164)),
+                          child: Icon(
+                            Icons.edit_note,
+                            size: 14,
+                            color: Color.fromARGB(255, 103, 80, 164),
+                          ),
                         )
                       else
                         const SizedBox(width: 18),
@@ -1058,10 +1366,13 @@ class ChatScreenState extends State<ChatScreen> {
                 builder: (context) {
                   final filteredMessages = messages.where((msg) {
                     if (selectedChat == 'General') {
-                      return !msg.isPrivate && (msg.group == null || msg.group == 'General');
+                      return !msg.isPrivate &&
+                          (msg.group == null || msg.group == 'General');
                     } else if (users.contains(selectedChat)) {
                       if (!msg.isPrivate) return false;
-                      final otherUser = msg.username == widget.username ? msg.target : msg.username;
+                      final otherUser = msg.username == widget.username
+                          ? msg.target
+                          : msg.username;
                       return otherUser == selectedChat;
                     } else if (myGroups.contains(selectedChat)) {
                       return msg.group == selectedChat && !msg.isPrivate;
@@ -1098,11 +1409,19 @@ class ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: messageController,
+                    focusNode: messageFocusNode,
+                    minLines: 1,
+                    maxLines: 4,
                     onChanged: onTextChanged,
                     decoration: InputDecoration(
                       hintText: getHintText(),
                       filled: true,
                       fillColor: Colors.white,
+                      prefixIcon: IconButton(
+                        tooltip: 'Emoji',
+                        onPressed: showEmojiPicker,
+                        icon: const Icon(Icons.emoji_emotions_outlined),
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(25),
                         borderSide: BorderSide.none,
@@ -1146,45 +1465,69 @@ class ChatScreenState extends State<ChatScreen> {
   Widget buildMessageBubble(ChatMessage msg, bool isMe) {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        constraints: const BoxConstraints(maxWidth: 280),
-        decoration: BoxDecoration(
-          color: isMe
-              ? const Color.fromARGB(255, 201, 173, 167)
-              : const Color.fromARGB(255, 242, 233, 228),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              msg.isPrivate
-                  ? (isMe
-                        ? 'Către: ${msg.target ?? "Necunoscut"}'
-                        : 'De la: ${msg.username}')
-                  : 'De la: ${msg.username}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-                color: isMe ? Colors.white : Colors.grey[700],
+      child: GestureDetector(
+        onLongPress: () => copyMessageText(msg.message),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          constraints: const BoxConstraints(maxWidth: 280),
+          decoration: BoxDecoration(
+            color: isMe
+                ? const Color.fromARGB(255, 201, 173, 167)
+                : const Color.fromARGB(255, 242, 233, 228),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(20),
+              topRight: const Radius.circular(20),
+              bottomLeft: Radius.circular(isMe ? 20 : 6),
+              bottomRight: Radius.circular(isMe ? 6 : 20),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                msg.isPrivate
+                    ? (isMe
+                          ? 'Către: ${msg.target ?? "Necunoscut"}'
+                          : 'De la: ${msg.username}')
+                    : 'De la: ${msg.username}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: isMe ? Colors.white : Colors.grey[700],
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              msg.message,
-              style: TextStyle(color: isMe ? Colors.white : Colors.black87),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              formatTime(msg.timestamp),
-              style: TextStyle(
-                fontSize: 10,
-                color: isMe ? Colors.white70 : Colors.grey,
+              const SizedBox(height: 4),
+              Text(
+                msg.message,
+                style: TextStyle(color: isMe ? Colors.white : Colors.black87),
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      formatTime(msg.timestamp),
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: isMe ? Colors.white70 : Colors.grey,
+                      ),
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.done_all,
+                        size: 12,
+                        color: Colors.white70,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
