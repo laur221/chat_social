@@ -3,6 +3,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'chat.dart';
 import 'register.dart' show RegisterScreen;
+import 'server_discovery.dart';
 import 'dart:convert';
 import 'dart:async';
 
@@ -13,10 +14,6 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-const host = String.fromEnvironment(
-  'CHAT_WS_HOST',
-  defaultValue: 'ws://192.168.1.116:10000/ws',
-);
 const googleWebClientId = String.fromEnvironment(
   'GOOGLE_WEB_CLIENT_ID',
   defaultValue:
@@ -33,12 +30,14 @@ class _LoginScreenState extends State<LoginScreen> {
   );
   bool _isLoading = false;
   String? _lastError;
+  String _serverHost = configuredWsHost;
 
   @override
   void initState() {
     super.initState();
     usernameController = TextEditingController();
     passwordController = TextEditingController();
+    unawaited(_discoverServerSilently());
   }
 
   @override
@@ -71,15 +70,46 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
+  Future<void> _discoverServerSilently() async {
+    final discovered = await ServerDiscovery.discoverWsHost();
+    if (!mounted || discovered == null || discovered.isEmpty) return;
+    setState(() {
+      _serverHost = discovered;
+    });
+  }
+
+  Future<bool> _ensureServerHost() async {
+    if (_serverHost.isNotEmpty) return true;
+    final discovered = await ServerDiscovery.discoverWsHost();
+    if (discovered != null && discovered.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _serverHost = discovered;
+        });
+      } else {
+        _serverHost = discovered;
+      }
+      return true;
+    }
+    _showError(
+      'Nu am găsit serverul automat în rețea. Pornește serverul și asigură-te că telefonul e pe aceeași rețea Wi-Fi.',
+    );
+    return false;
+  }
+
   Future<void> _authenticateWithPayload(
     Map<String, dynamic> authPayload, {
     required String usernameHint,
   }) async {
+    if (!await _ensureServerHost()) {
+      _stopLoading();
+      return;
+    }
     debugPrint(
-      '[LOGIN_FLOW] start auth type=${authPayload['type']} host=$host',
+      '[LOGIN_FLOW] start auth type=${authPayload['type']} host=$_serverHost',
     );
     try {
-      final channel = WebSocketChannel.connect(Uri.parse(host));
+      final channel = WebSocketChannel.connect(Uri.parse(_serverHost));
       channel.sink.add(jsonEncode(authPayload));
 
       final controller = StreamController.broadcast();
@@ -364,7 +394,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
                 const SizedBox(height: 20),
                 Text(
-                  'Server: $host',
+                  _serverHost.isEmpty
+                      ? 'Server: căutare automată...'
+                      : 'Server: $_serverHost',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],

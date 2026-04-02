@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -30,6 +31,8 @@ LOG_PATH = os.environ.get(
     "CHAT_LOG_PATH",
     os.path.join(os.path.dirname(__file__), "chat_server.log"),
 )
+DISCOVERY_PORT = int(os.environ.get("CHAT_DISCOVERY_PORT", "10001"))
+DISCOVERY_MAGIC = os.environ.get("CHAT_DISCOVERY_MAGIC", "CHAT_SOCIAL_DISCOVER")
 
 
 connected_clients: Set[web.WebSocketResponse] = set()
@@ -949,6 +952,67 @@ async def health_check(_: web.Request) -> web.Response:
     )
 
 
+def resolve_server_ip_for_remote(remote_ip: str) -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect((remote_ip, 1))
+            local_ip = sock.getsockname()[0]
+            if local_ip and not local_ip.startswith("127."):
+                return local_ip
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+class DiscoveryProtocol(asyncio.DatagramProtocol):
+    def __init__(self, ws_port: int) -> None:
+        self.ws_port = ws_port
+        self.transport: Optional[asyncio.DatagramTransport] = None
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.transport = transport if isinstance(transport, asyncio.DatagramTransport) else None
+
+    def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
+        if not self.transport:
+            return
+        remote_ip, _ = addr
+        try:
+            payload_text = data.decode("utf-8", errors="ignore").strip()
+        except Exception:
+            return
+        if not payload_text:
+            return
+
+        is_discovery = False
+        if payload_text == DISCOVERY_MAGIC:
+            is_discovery = True
+        else:
+            try:
+                payload = json.loads(payload_text)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict):
+                req_type = (payload.get("type") or "").strip()
+                magic = (payload.get("magic") or "").strip()
+                is_discovery = req_type == "discover_chat_social" or magic == DISCOVERY_MAGIC
+
+        if not is_discovery:
+            return
+
+        server_ip = resolve_server_ip_for_remote(remote_ip)
+        response = {
+            "service": "chat-social-server-discovery",
+            "ws_url": f"ws://{server_ip}:{self.ws_port}/ws",
+            "server_ip": server_ip,
+            "ws_port": self.ws_port,
+        }
+        try:
+            self.transport.sendto(json.dumps(response).encode("utf-8"), addr)
+            log_event("discovery_reply", remote=remote_ip, ws_url=response["ws_url"])
+        except Exception:
+            pass
+
+
 async def main() -> None:
     port = int(os.environ.get("PORT", "10000"))
     host = "0.0.0.0"
@@ -962,6 +1026,7 @@ async def main() -> None:
     print("Server Chat Social")
     print(f"WebSocket: ws://{host}:{port}/ws")
     print(f"Health:    http://{host}:{port}/")
+    print(f"Discovery: udp://{host}:{DISCOVERY_PORT}")
     print(f"DB:        {DB_PATH}")
     print(f"GoogleAuth:{'ON' if GOOGLE_CLIENT_ID else 'OFF'}")
     print("=" * 60)
@@ -974,10 +1039,17 @@ async def main() -> None:
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
+    loop = asyncio.get_running_loop()
+    discovery_transport, _ = await loop.create_datagram_endpoint(
+        lambda: DiscoveryProtocol(port),
+        local_addr=(host, DISCOVERY_PORT),
+        allow_broadcast=True,
+    )
 
     try:
         await asyncio.Future()
     finally:
+        discovery_transport.close()
         await runner.cleanup()
 
 

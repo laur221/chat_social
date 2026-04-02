@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'login.dart';
+import 'server_discovery.dart';
 
 class ChatScreen extends StatefulWidget {
   final String username;
@@ -21,11 +22,6 @@ class ChatScreen extends StatefulWidget {
   @override
   State<ChatScreen> createState() => ChatScreenState();
 }
-
-const host = String.fromEnvironment(
-  'CHAT_WS_HOST',
-  defaultValue: 'ws://192.168.1.116:10000/ws',
-);
 
 class ChatScreenState extends State<ChatScreen> {
   late WebSocketChannel channel;
@@ -51,12 +47,21 @@ class ChatScreenState extends State<ChatScreen> {
   int reconnectAttempts = 0;
   Timer? reconnectTimer;
   bool isConnected = false;
+  String _serverHost = configuredWsHost;
+  bool _showEmojiPicker = false;
 
   @override
   void initState() {
     super.initState();
+    messageFocusNode.addListener(() {
+      if (messageFocusNode.hasFocus && _showEmojiPicker && mounted) {
+        setState(() {
+          _showEmojiPicker = false;
+        });
+      }
+    });
     if (widget.channel == null) {
-      connectToServer();
+      unawaited(connectToServer());
     } else {
       channel = widget.channel!;
       final incoming =
@@ -196,9 +201,23 @@ class ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void connectToServer() {
+  Future<bool> _ensureServerHost() async {
+    if (_serverHost.isNotEmpty) return true;
+    final discovered = await ServerDiscovery.discoverWsHost();
+    if (discovered != null && discovered.isNotEmpty) {
+      _serverHost = discovered;
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> connectToServer() async {
+    if (!await _ensureServerHost()) {
+      handleDisconnect();
+      return;
+    }
     try {
-      channel = WebSocketChannel.connect(Uri.parse(host));
+      channel = WebSocketChannel.connect(Uri.parse(_serverHost));
       channel.stream.listen(
         (message) {
           setState(() {
@@ -499,31 +518,18 @@ class ChatScreenState extends State<ChatScreen> {
     if (autoSave) drafts[selectedChat] = text;
   }
 
-  Future<void> showEmojiPicker() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-        return SafeArea(
-          child: SizedBox(
-            height: 360 + bottomInset,
-            child: EmojiPicker(
-              textEditingController: messageController,
-              onEmojiSelected: (category, emoji) {
-                onTextChanged(messageController.text);
-              },
-              onBackspacePressed: () {
-                onTextChanged(messageController.text);
-              },
-              config: const Config(height: 360),
-            ),
-          ),
-        );
-      },
-    );
-    if (!mounted) return;
-    messageFocusNode.requestFocus();
+  void toggleEmojiPicker() {
+    if (_showEmojiPicker) {
+      setState(() {
+        _showEmojiPicker = false;
+      });
+      messageFocusNode.requestFocus();
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _showEmojiPicker = true;
+    });
   }
 
   Future<void> copyMessageText(String text) async {
@@ -1404,46 +1410,86 @@ class ChatScreenState extends State<ChatScreen> {
           Container(
             padding: const EdgeInsets.all(16),
             color: const Color.fromARGB(255, 242, 233, 228),
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: messageController,
-                    focusNode: messageFocusNode,
-                    minLines: 1,
-                    maxLines: 4,
-                    onChanged: onTextChanged,
-                    decoration: InputDecoration(
-                      hintText: getHintText(),
-                      filled: true,
-                      fillColor: Colors.white,
-                      prefixIcon: IconButton(
-                        tooltip: 'Emoji',
-                        onPressed: showEmojiPicker,
-                        icon: const Icon(Icons.emoji_emotions_outlined),
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(25),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 15,
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: messageController,
+                        focusNode: messageFocusNode,
+                        minLines: 1,
+                        maxLines: 4,
+                        onTap: () {
+                          if (_showEmojiPicker) {
+                            setState(() {
+                              _showEmojiPicker = false;
+                            });
+                          }
+                        },
+                        onChanged: onTextChanged,
+                        decoration: InputDecoration(
+                          hintText: getHintText(),
+                          filled: true,
+                          fillColor: Colors.white,
+                          prefixIcon: IconButton(
+                            tooltip: 'Emoji',
+                            onPressed: toggleEmojiPicker,
+                            icon: Icon(
+                              _showEmojiPicker
+                                  ? Icons.keyboard_outlined
+                                  : Icons.emoji_emotions_outlined,
+                            ),
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(25),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 15,
+                          ),
+                        ),
+                        onSubmitted: (_) => sendMessage(),
                       ),
                     ),
-                    onSubmitted: (_) => sendMessage(),
-                  ),
+                    const SizedBox(width: 10),
+                    IconButton(
+                      onPressed: sendMessage,
+                      icon: const Icon(Icons.send),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color.fromARGB(
+                          255,
+                          201,
+                          173,
+                          167,
+                        ),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                IconButton(
-                  onPressed: sendMessage,
-                  icon: const Icon(Icons.send),
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 201, 173, 167),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.all(12),
+                if (_showEmojiPicker) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 300,
+                    child: EmojiPicker(
+                      textEditingController: messageController,
+                      onEmojiSelected: (category, emoji) {
+                        onTextChanged(messageController.text);
+                      },
+                      onBackspacePressed: () {
+                        onTextChanged(messageController.text);
+                      },
+                      config: const Config(
+                        height: 300,
+                        searchViewConfig: SearchViewConfig(),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
