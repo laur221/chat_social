@@ -1,11 +1,17 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'auth_widgets.dart';
 import 'chat.dart';
+import 'google_auth_config.dart';
 import 'register.dart' show RegisterScreen;
 import 'server_discovery.dart';
-import 'dart:convert';
-import 'dart:async';
+
+const authResponseTimeout = Duration(seconds: 20);
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -13,13 +19,6 @@ class LoginScreen extends StatefulWidget {
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
-
-const googleWebClientId = String.fromEnvironment(
-  'GOOGLE_WEB_CLIENT_ID',
-  defaultValue:
-      '237335672620-elb89eetdgsnshh7bt4beu30jvm4a9sq.apps.googleusercontent.com',
-);
-const authResponseTimeout = Duration(seconds: 20);
 
 class _LoginScreenState extends State<LoginScreen> {
   late final TextEditingController usernameController;
@@ -57,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: Colors.red,
+        backgroundColor: const Color(0xFFD92D20),
         duration: const Duration(seconds: 10),
       ),
     );
@@ -92,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return true;
     }
     _showError(
-      'Nu am găsit serverul automat în rețea. Pornește serverul și asigură-te că telefonul e pe aceeași rețea Wi-Fi.',
+      'Nu am gasit serverul. Verifica adresa serverului si conexiunea.',
     );
     return false;
   }
@@ -164,15 +163,13 @@ class _LoginScreenState extends State<LoginScreen> {
         final errorMessage = (resp['message'] as String?)?.trim();
         _showError(
           errorMessage == null || errorMessage.isEmpty
-              ? 'Autentificare eșuată'
+              ? 'Autentificare esuata'
               : errorMessage,
         );
         _stopLoading();
       }
     } on TimeoutException {
-      _showError(
-        'Timeout la autentificare (>${authResponseTimeout.inSeconds}s). Verifică internetul pe telefon și conexiunea la server.',
-      );
+      _showError('Timeout la autentificare. Verifica serverul si conexiunea.');
       _stopLoading();
     } catch (e) {
       _showError('Eroare la autentificare: $e');
@@ -191,9 +188,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signInWithGoogle({bool forceAccountPicker = true}) async {
     if (googleWebClientId.isEmpty) {
-      _showError(
-        'GOOGLE_WEB_CLIENT_ID nu este setat. Rulează cu --dart-define=GOOGLE_WEB_CLIENT_ID=...',
-      );
+      _showError('GOOGLE_WEB_CLIENT_ID nu este setat.');
       _stopLoading();
       return;
     }
@@ -220,188 +215,180 @@ class _LoginScreenState extends State<LoginScreen> {
         'id_token': idToken,
       }, usernameHint: account.email.split('@').first);
     } catch (e) {
-      _showError('Eroare Google Sign-In: $e');
+      _showError(googleSignInErrorMessage(e));
       _stopLoading();
     }
+  }
+
+  Future<void> _loginWithPassword() async {
+    final username = usernameController.text.trim();
+    final password = passwordController.text.trim();
+
+    if (username.isEmpty || password.isEmpty) {
+      _showError('Va rugam sa introduceti username si parola');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+    await _authenticateWithPayload({
+      'type': 'auth',
+      'username': username,
+      'password': password,
+    }, usernameHint: username);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color.fromARGB(255, 242, 233, 228),
+      resizeToAvoidBottomInset: false,
+      backgroundColor: const Color(0xFFF9FAF6),
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.chat_bubble,
-                  size: 80,
-                  color: Color.fromARGB(255, 201, 173, 167),
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  'Chat Social',
-                  style: TextStyle(
-                    fontFamily: 'Arial',
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Bine ați venit',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
-                ),
-                const SizedBox(height: 40),
-                TextField(
-                  controller: usernameController,
-                  decoration: InputDecoration(
-                    labelText: 'Nume de utilizator',
-                    fillColor: const Color.fromARGB(255, 201, 173, 167),
-                    filled: true,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
-                    ),
-                    prefixIcon: const Icon(Icons.person),
-                  ),
-                  style: const TextStyle(
-                    fontSize: 16,
-                    color: Color.fromARGB(255, 26, 27, 37),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                SizedBox(
-                  height: 60,
-                  child: PasswordField(controller: passwordController),
-                ),
-                const SizedBox(height: 30),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : ElevatedButton(
-                          onPressed: () async {
-                            final username = usernameController.text.trim();
-                            final password = passwordController.text.trim();
-
-                            if (username.isEmpty || password.isEmpty) {
-                              _showError(
-                                'Vă rugăm să introduceți username și parola',
-                              );
-                              return;
-                            }
-
-                            setState(() {
-                              _isLoading = true;
-                            });
-                            await _authenticateWithPayload({
-                              'type': 'auth',
-                              'username': username,
-                              'password': password,
-                            }, usernameHint: username);
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color.fromARGB(
-                              255,
-                              201,
-                              173,
-                              167,
-                            ),
-                            foregroundColor: const Color.fromARGB(
-                              255,
-                              26,
-                              27,
-                              37,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            elevation: 2,
-                          ),
-                          child: const Text(
-                            'Autentificare',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoading
-                        ? null
-                        : () async {
-                            setState(() {
-                              _isLoading = true;
-                            });
-                            await _signInWithGoogle(forceAccountPicker: true);
-                          },
-                    icon: const Icon(Icons.login),
-                    label: const Text('Continuă cu Google'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color.fromARGB(255, 26, 27, 37),
-                      side: const BorderSide(
-                        color: Color.fromARGB(255, 201, 173, 167),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: _isLoading
-                      ? null
-                      : () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const RegisterScreen(),
-                            ),
-                          );
-                        },
-                  child: const Text('Nu ai cont? Creează unul acum'),
-                ),
-                if (_lastError != null) ...[
-                  const SizedBox(height: 10),
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+              color: const Color(0xFF101828),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
+                    width: 48,
+                    height: 48,
                     decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.08),
-                      border: Border.all(color: Colors.red.shade200),
-                      borderRadius: BorderRadius.circular(12),
+                      color: const Color(0xFFFF6B5F),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    child: SelectableText(
-                      _lastError!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF7A0000),
-                      ),
+                    child: const Icon(
+                      Icons.forum_rounded,
+                      color: Colors.white,
+                      size: 26,
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Chat Social',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Conecteaza-te la conversatiile tale.',
+                    style: TextStyle(color: Color(0xFFD0D5DD), fontSize: 16),
                   ),
                 ],
-                const SizedBox(height: 20),
-                Text(
-                  _serverHost.isEmpty
-                      ? 'Server: căutare automată...'
-                      : 'Server: $_serverHost',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
+              ),
             ),
-          ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Autentificare',
+                      style: TextStyle(
+                        color: Color(0xFF101828),
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Introdu datele contului pentru a intra in aplicatie.',
+                      style: TextStyle(color: Color(0xFF667085), fontSize: 14),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: usernameController,
+                      decoration: authInputDecoration(
+                        label: 'Nume de utilizator',
+                        icon: Icons.person_outline,
+                      ),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: Color(0xFF101828),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    PasswordField(controller: passwordController),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 52,
+                      child: _isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : FilledButton.icon(
+                              onPressed: _loginWithPassword,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFFF6B5F),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              icon: const Icon(Icons.arrow_forward_rounded),
+                              label: const Text(
+                                'Autentificare',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        onPressed: _isLoading
+                            ? null
+                            : () async {
+                                setState(() {
+                                  _isLoading = true;
+                                });
+                                await _signInWithGoogle(
+                                  forceAccountPicker: true,
+                                );
+                              },
+                        icon: const Icon(Icons.login_rounded),
+                        label: const Text('Continua cu Google'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF101828),
+                          side: const BorderSide(color: Color(0xFFD0D5DD)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _isLoading
+                          ? null
+                          : () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const RegisterScreen(),
+                                ),
+                              );
+                            },
+                      child: const Text('Nu ai cont? Creeaza unul acum'),
+                    ),
+                    if (_lastError != null) ...[
+                      const SizedBox(height: 10),
+                      ErrorPanel(message: _lastError!),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -425,24 +412,17 @@ class PasswordFieldState extends State<PasswordField> {
     return TextField(
       controller: widget.controller,
       obscureText: _isObscured,
-      decoration: InputDecoration(
-        hintText: 'Parolă',
-        filled: true,
-        fillColor: const Color.fromARGB(255, 201, 173, 167),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(30),
-          borderSide: BorderSide.none,
-        ),
-        prefixIcon: const Icon(Icons.lock),
-        suffixIcon: IconButton(
-          icon: Icon(_isObscured ? Icons.visibility : Icons.visibility_off),
-          onPressed: () {
-            setState(() {
-              _isObscured = !_isObscured;
-            });
-          },
-        ),
-      ),
+      decoration: authInputDecoration(label: 'Parola', icon: Icons.lock_outline)
+          .copyWith(
+            suffixIcon: IconButton(
+              icon: Icon(_isObscured ? Icons.visibility : Icons.visibility_off),
+              onPressed: () {
+                setState(() {
+                  _isObscured = !_isObscured;
+                });
+              },
+            ),
+          ),
     );
   }
 }
